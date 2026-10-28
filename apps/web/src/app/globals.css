@@ -1,0 +1,214 @@
+@import "tailwindcss";
+
+/* ───────── Tokens ───────── */
+:root {
+  /* ── marca (própria do Prezenti): azul vivo + ciano claro, sempre tons médios ── */
+  --pz-azul: #2f5bea;
+  --pz-azul-forte: #2548c9;
+  --pz-azul-suave: #e8eeff;
+  --pz-ceu: #8be6f7;
+
+  /* ── semânticos (mesma arquitetura em camadas do design system do ilhapay) ── */
+  --bg: #f6f8fc;
+  --surface: #ffffff;
+  --surface-2: #eff3fa;
+  --line: #e3e8f2;
+  --ink: #16203a;
+  --muted: #66728c;
+  --brand: var(--pz-azul);
+  --brand-hover: var(--pz-azul-forte);
+  --brand-soft: var(--pz-azul-suave);
+  --brand-ink: #ffffff;
+  --accent: var(--pz-ceu);
+
+  /* estados: cor sólida + fundo suave */
+  --ok: #138a5b;     --ok-bg: #e2f5ec;
+  --late: #a96a00;   --late-bg: #fdf1d9;
+  --bad: #c7392e;    --bad-bg: #fbe4e1;
+  --gone: #72809a;
+
+  /* forma */
+  --radius-sm: 6px; --radius-md: 12px; --radius-lg: 18px; --radius-xl: 26px;
+  --shadow-1: 0 1px 2px rgb(22 32 58 / 0.05);
+  --shadow: 0 1px 2px rgb(22 32 58 / 0.05), 0 12px 32px -16px rgb(22 32 58 / 0.14);
+
+  /* layout */
+  --sidebar-w: 248px;
+  --topbar-h: 64px;
+  --content-max: 1200px;
+
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-in: cubic-bezier(0.3, 0, 1, 1);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-brand: var(--brand);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-ink: var(--brand-ink);
+  --color-accent: var(--accent);
+  --color-ok: var(--ok);
+  --color-ok-bg: var(--ok-bg);
+  --color-late: var(--late);
+  --color-late-bg: var(--late-bg);
+  --color-bad: var(--bad);
+  --color-bad-bg: var(--bad-bg);
+  --color-gone: var(--gone);
+  --font-sans: var(--font-body), system-ui, sans-serif;
+  --font-display: var(--font-display), system-ui, sans-serif;
+  --font-mono: var(--font-mono), ui-monospace, monospace;
+}
+
+html { color-scheme: light; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 6px; }
+
+/* Títulos em Bricolage Grotesque. */
+/* Títulos em Plus Jakarta Sans. */
+.font-display { font-weight: 700; letter-spacing: -0.025em; }
+
+/* ───────── Componentes base ───────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+.input {
+  width: 100%;
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  min-height: 3rem;
+  padding: 0.7rem 0.95rem;
+  font-size: 1rem;
+  color: var(--ink);
+  transition: border-color 150ms var(--ease), box-shadow 150ms var(--ease);
+}
+.input::placeholder { color: var(--muted); opacity: 0.8; }
+.input:hover { border-color: #c9d1e2; }
+.input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 4px rgba(47, 91, 234, 0.2); }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+  border-radius: 12px; padding: 0.65rem 1.1rem; font-weight: 600; font-size: 0.92rem;
+  transition: transform 120ms var(--ease), background-color 150ms var(--ease), box-shadow 150ms var(--ease), opacity 150ms;
+  cursor: pointer; user-select: none;
+}
+.btn:active:not(:disabled) { transform: scale(0.97); }
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.btn-primary { background: var(--brand); color: var(--brand-ink); }
+.btn-primary:hover:not(:disabled) { background: var(--brand-hover); box-shadow: 0 6px 18px -6px rgba(47, 91, 234, 0.55); }
+.btn-ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+.btn-ghost:hover:not(:disabled) { background: var(--surface-2); }
+.btn-quiet { background: transparent; color: var(--brand); padding: 0.4rem 0.6rem; }
+.btn-quiet:hover:not(:disabled) { background: rgba(47, 91, 234, 0.1); }
+
+.pill {
+  position: relative; isolation: isolate;
+  display: inline-flex; align-items: center; gap: 0.4rem; border-radius: 999px;
+  padding: 0.2rem 0.65rem 0.2rem 0.5rem; font-size: 0.78rem; font-weight: 600;
+  color: var(--tone);
+}
+/* Fundo suave da cor do estado: camada com opacidade, funciona em qualquer navegador. */
+.pill::after { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--tone); opacity: 0.13; }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--tone); }
+
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 25%, #f7f9fd 50%, var(--surface-2) 75%);
+  background-size: 200% 100%; animation: shimmer 1.4s linear infinite; border-radius: 8px;
+}
+
+/* ───────── Movimento (corporate: 150–400ms, ease standard) ───────── */
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pop { 0% { opacity: 0; transform: scale(0.92) translateY(8px); } 100% { opacity: 1; transform: none; } }
+@keyframes fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes shake { 0%,100% { transform: none; } 20% { transform: translateX(-8px); } 45% { transform: translateX(7px); } 70% { transform: translateX(-4px); } }
+@keyframes ring { 0% { transform: scale(0.55); opacity: 0.55; } 100% { transform: scale(2.4); opacity: 0; } }
+@keyframes burst { 0% { transform: scale(0.4); opacity: 0.7; } 100% { transform: scale(3.2); opacity: 0; } }
+@keyframes shimmer { to { background-position: -200% 0; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes blink { 50% { opacity: 0.35; } }
+@keyframes toast { 0% { opacity: 0; transform: translate(-50%, 12px); } 12%,88% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; transform: translate(-50%, 6px); } }
+
+.anim-rise { animation: rise 320ms var(--ease-out) both; }
+.anim-fade { animation: fade 220ms var(--ease) both; }
+.anim-pop { animation: pop 300ms var(--ease-out) both; }
+.anim-shake { animation: shake 360ms var(--ease) both; }
+.anim-spin { animation: spin 700ms linear infinite; }
+.anim-blink { animation: blink 2s ease-in-out infinite; }
+.nfc-ring { position: absolute; inset: 0; margin: auto; border-radius: 50%; border: 1.5px solid currentColor; animation: ring 4.2s var(--ease) infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
+}
+
+/* ───────── Cena do cartão NFC (login) ─────────
+   Um ciclo de 6,4 s: o cartão aproxima-se do leitor, toca, as ondas saem e o aviso aparece.
+   Sem animação (reduced motion) fica o instante do toque: cartão no leitor, aviso visível. */
+.nfc-card { animation: nfc-card 6.4s var(--ease) infinite; }
+.nfc-pad { animation: nfc-pad 6.4s var(--ease) infinite; }
+.nfc-wave { position: absolute; left: 50%; top: 50%; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%; border: 2px solid currentColor; opacity: 0; }
+.nfc-wave-1 { animation: nfc-wave 6.4s var(--ease-out) infinite; }
+.nfc-wave-2 { animation: nfc-wave-late 6.4s var(--ease-out) infinite; }
+.nfc-note { animation: nfc-note 6.4s var(--ease) infinite; }
+
+@keyframes nfc-card {
+  0%   { transform: translate(84px, -100px) rotate(-10deg); animation-timing-function: ease-in-out; }
+  12%  { transform: translate(84px, -110px) rotate(-9deg); animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1); }
+  40%  { transform: translate(0, 0) rotate(0deg) scale(1); animation-timing-function: ease-in-out; }
+  46%  { transform: translate(0, 4px) rotate(0deg) scale(0.97); animation-timing-function: var(--ease-out); }
+  52%  { transform: translate(0, 0) rotate(0deg) scale(1); }
+  86%  { transform: translate(0, 0) rotate(0deg) scale(1); animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1); }
+  100% { transform: translate(84px, -100px) rotate(-10deg); }
+}
+@keyframes nfc-pad {
+  0%, 44% { box-shadow: 0 0 0 0 rgb(255 255 255 / 0); border-color: rgb(255 255 255 / 0.35); }
+  50% { box-shadow: 0 0 0 10px rgb(255 255 255 / 0.14), 0 0 40px 4px rgb(139 230 247 / 0.55); border-color: rgb(255 255 255 / 0.9); }
+  72%, 100% { box-shadow: 0 0 0 0 rgb(255 255 255 / 0); border-color: rgb(255 255 255 / 0.35); }
+}
+@keyframes nfc-wave {
+  0%, 45% { transform: scale(0.4); opacity: 0; }
+  47% { opacity: 0.8; }
+  70%, 100% { transform: scale(2.6); opacity: 0; }
+}
+@keyframes nfc-wave-late {
+  0%, 50% { transform: scale(0.4); opacity: 0; }
+  52% { opacity: 0.6; }
+  76%, 100% { transform: scale(2.9); opacity: 0; }
+}
+@keyframes nfc-note {
+  0%, 47% { opacity: 0; transform: translateY(14px) scale(0.96); animation-timing-function: var(--ease-out); }
+  56% { opacity: 1; transform: none; }
+  90% { opacity: 1; transform: none; animation-timing-function: var(--ease-in); }
+  97%, 100% { opacity: 0; transform: translateY(-6px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nfc-card, .nfc-pad, .nfc-wave, .nfc-note { animation: none !important; }
+  .nfc-wave { display: none; }
+}
+
+/* ───────── Gráficos: movimento corporate (≤ 600 ms, ease-out) ───────── */
+.viz-bar { transform-box: fill-box; transform-origin: bottom; animation: grow 420ms var(--ease-out) both; transition: opacity 150ms var(--ease); }
+.viz-hbar { transform-origin: left; animation: fill 480ms var(--ease-out) both; }
+.viz-line { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 900ms var(--ease) 80ms forwards; }
+.viz-area { animation: fade 700ms var(--ease) 350ms both; }
+.viz-dot { animation: pop 300ms var(--ease-out) 800ms both; }
+@keyframes grow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .viz-line { stroke-dashoffset: 0; animation: none; }
+}
