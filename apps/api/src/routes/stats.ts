@@ -1,67 +1,59 @@
-import type { FastifyInstance } from 'fastify';
+import { Hono } from 'hono';
 import { z } from 'zod';
-import { db } from '../db.js';
+import { all, first } from '../db.js';
 import { requireRole } from '../auth.js';
 import { localParts } from '../lib/time.js';
+import type { AppEnv } from '../env.js';
 
 const staff = requireRole('admin', 'teacher');
 const DAY = 864e5;
 
-export async function statsRoutes(app: FastifyInstance) {
-  // Números do painel: série diária (presentes, atrasos, almoços, ocorrências) e chegadas de hoje.
-  // O professor só vê a sua turma, como no resto da API.
-  app.get('/stats/overview', { preHandler: staff }, async (req) => {
-    const { days } = z.object({ days: z.coerce.number().int().min(3).max(90).default(14) }).parse(req.query);
-    const { sub, role, school_id } = req.user;
-    const school = await db('schools').where({ id: school_id }).first('timezone', 'late_after', 'min_exit_time');
-    const today = localParts(new Date(), school.timezone).date;
-    const from = localParts(new Date(Date.now() - (days - 1) * DAY), school.timezone).date;
+export const statsRoutes = new Hono<AppEnv>();
 
-    const scoped = <T extends { where: (...a: any[]) => T }>(q: T) => (role === 'teacher' ? q.where('c.teacher_id', sub) : q);
-    const base = () =>
-      scoped(
-        db('events as e')
-          .join('students as s', 's.id', 'e.student_id')
-          .leftJoin('classes as c', 'c.id', 's.class_id')
-          .where('e.school_id', school_id),
-      );
+// Números do painel: série diária (presentes, atrasos, almoços, ocorrências) e chegadas de hoje.
+// O professor só vê as suas turmas, como no resto da API.
+statsRoutes.get('/stats/overview', staff, async (c) => {
+  const { days } = z.object({ days: z.coerce.number().int().min(3).max(90).default(14) }).parse(c.req.query());
+  const { sub, role, school_id } = c.get('user');
+  const db = c.env.DB;
+  const school = await first<{ timezone: string; late_after: string; min_exit_time: string }>(db, 'SELECT timezone, late_after, min_exit_time FROM schools WHERE id = ?', school_id);
+  const tz = school?.timezone ?? 'UTC';
+  const today = localParts(new Date(), tz).date;
+  const from = localParts(new Date(Date.now() - (days - 1) * DAY), tz).date;
+  const scope = role === 'teacher' ? 'AND c.teacher_id = ?' : '';
+  const scopeParams = role === 'teacher' ? [sub] : [];
 
-    const enrolled = Number(
-      (await scoped(db('students as s').leftJoin('classes as c', 'c.id', 's.class_id').where({ 's.school_id': school_id, 's.active': 1 }).count({ n: 's.id' }).first() as any) as any)?.n ?? 0,
-    );
+  const enrolled = Number((await first<{ n: number }>(db,
+    `SELECT COUNT(s.id) AS n FROM students s LEFT JOIN classes c ON c.id = s.class_id WHERE s.school_id = ? AND s.active = 1 ${scope}`,
+    school_id, ...scopeParams))?.n ?? 0);
 
-    const rows = await base()
-      .where('e.local_date', '>=', from)
-      .groupBy('e.local_date', 'e.type')
-      .select('e.local_date', 'e.type')
-      .count({ n: 'e.id' })
-      .sum({ late_n: 'e.late' });
+  const rows = await all<{ local_date: string; type: string; n: number; late_n: number | null }>(db,
+    `SELECT e.local_date, e.type, COUNT(e.id) AS n, SUM(e.late) AS late_n
+     FROM events e JOIN students s ON s.id = e.student_id LEFT JOIN classes c ON c.id = s.class_id
+     WHERE e.school_id = ? AND e.local_date >= ? ${scope} GROUP BY e.local_date, e.type`,
+    school_id, from, ...scopeParams);
 
-    const byDate = new Map<string, { present: number; late: number; lunch: number; incidents: number }>();
-    for (let i = days - 1; i >= 0; i--) {
-      byDate.set(localParts(new Date(Date.now() - i * DAY), school.timezone).date, { present: 0, late: 0, lunch: 0, incidents: 0 });
-    }
-    for (const r of rows as any[]) {
-      const d = byDate.get(r.local_date);
-      if (!d) continue;
-      if (r.type === 'entry') { d.present = Number(r.n); d.late = Number(r.late_n ?? 0); }
-      if (r.type === 'lunch') d.lunch = Number(r.n);
-      if (r.type === 'incident') d.incidents = Number(r.n);
-    }
+  const byDate = new Map<string, { present: number; late: number; lunch: number; incidents: number }>();
+  for (let i = days - 1; i >= 0; i--) byDate.set(localParts(new Date(Date.now() - i * DAY), tz).date, { present: 0, late: 0, lunch: 0, incidents: 0 });
+  for (const r of rows) {
+    const d = byDate.get(r.local_date);
+    if (!d) continue;
+    if (r.type === 'entry') { d.present = Number(r.n); d.late = Number(r.late_n ?? 0); }
+    if (r.type === 'lunch') d.lunch = Number(r.n);
+    if (r.type === 'incident') d.incidents = Number(r.n);
+  }
 
-    const entries = await base().where({ 'e.local_date': today, 'e.type': 'entry' }).select('e.tapped_at', 'e.late');
-    const arrivals = entries.map((e: any) => ({
-      minutes: localParts(new Date(e.tapped_at.replace(' ', 'T') + 'Z'), school.timezone).minutes,
-      late: !!e.late,
-    }));
+  const entries = await all<{ tapped_at: string; late: number }>(db,
+    `SELECT e.tapped_at, e.late FROM events e JOIN students s ON s.id = e.student_id LEFT JOIN classes c ON c.id = s.class_id
+     WHERE e.school_id = ? AND e.local_date = ? AND e.type = 'entry' ${scope}`,
+    school_id, today, ...scopeParams);
 
-    return {
-      today,
-      late_after: school.late_after,
-      min_exit_time: school.min_exit_time,
-      enrolled,
-      days: [...byDate.entries()].map(([date, v]) => ({ date, ...v })),
-      arrivals,
-    };
+  return c.json({
+    today,
+    late_after: school?.late_after,
+    min_exit_time: school?.min_exit_time,
+    enrolled,
+    days: [...byDate.entries()].map(([date, v]) => ({ date, ...v })),
+    arrivals: entries.map((e) => ({ minutes: localParts(new Date(e.tapped_at.replace(' ', 'T') + 'Z'), tz).minutes, late: !!e.late })),
   });
-}
+});

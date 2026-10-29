@@ -1,353 +1,357 @@
-import crypto from 'node:crypto';
-import bcrypt from 'bcryptjs';
-import type { FastifyInstance } from 'fastify';
+import { Hono } from 'hono';
 import { z } from 'zod';
-import { db } from '../db.js';
+import { all, first, insert, isDup, marks, run, stmt } from '../db.js';
 import { requireRole } from '../auth.js';
 import { localParts, utcToLocalHHMM } from '../lib/time.js';
-import { daySummary } from '../lib/day.js';
+import { daySummary, type DayEvent } from '../lib/day.js';
+import { hashPassword, tempPassword, verifyPassword } from '../lib/password.js';
+import { uniqueUsername, USERNAME } from '../lib/username.js';
+import { normalizeCard } from './school.js';
+import type { AppEnv } from '../env.js';
 
 const staff = requireRole('admin', 'teacher');
 const adminOnly = requireRole('admin');
 const anyUser = requireRole('admin', 'teacher', 'guardian', 'super_admin');
 const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
-const tempPassword = () => crypto.randomBytes(5).toString('hex');
-const isDup = (e: any) => e?.code === 'ER_DUP_ENTRY';
+const idParam = (v: string | undefined) => z.coerce.number().int().parse(v);
+const username = z.string().trim().toLowerCase().regex(USERNAME, 'username');
+const email = z.string().trim().email().optional().or(z.literal('').transform(() => undefined));
+const schoolTz = async (db: D1Database, id: number | null) => (await first<{ timezone: string }>(db, 'SELECT timezone FROM schools WHERE id = ?', id))?.timezone ?? 'UTC';
 
 const csvCell = (v: unknown) => {
   const s = v == null ? '' : String(v);
   return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 
-export async function adminRoutes(app: FastifyInstance) {
-  // ───── Eu ─────
-  app.get('/me', { preHandler: anyUser }, async (req) => {
-    const u = await db('users').where({ id: req.user.sub }).first('id', 'name', 'email', 'role', 'school_id');
-    const consent = u.role === 'guardian'
-      ? !!(await db('consents').where({ guardian_id: u.id }).first('id'))
-      : true;
-    const school = u.school_id ? await db('schools').where({ id: u.school_id }).first('name') : null;
-    return { ...u, consented: consent, school_name: school?.name ?? null };
-  });
+export const adminRoutes = new Hono<AppEnv>();
 
-  app.post('/me/consent', { preHandler: requireRole('guardian') }, async (req) => {
-    const kids = await db('guardian_students').where({ guardian_id: req.user.sub }).pluck('student_id');
-    if (kids.length) {
-      await db('consents')
-        .insert(kids.map((student_id) => ({ guardian_id: req.user.sub, student_id, version: '1' })))
-        .onConflict().ignore();
-    }
-    return { ok: true };
-  });
+// ───── Eu ─────
+adminRoutes.get('/me', anyUser, async (c) => {
+  const db = c.env.DB;
+  const u = await first<{ id: number; name: string; username: string; email: string | null; role: string; school_id: number | null }>(db,
+    'SELECT id, name, username, email, role, school_id FROM users WHERE id = ?', c.get('user').sub);
+  if (!u) return c.json({ error: 'unauthorized' }, 401);
+  const consented = u.role === 'guardian' ? !!(await first(db, 'SELECT id FROM consents WHERE guardian_id = ?', u.id)) : true;
+  const school = u.school_id ? await first<{ name: string }>(db, 'SELECT name FROM schools WHERE id = ?', u.school_id) : null;
+  return c.json({ ...u, consented, school_name: school?.name ?? null });
+});
 
-  app.post('/auth/change-password', { preHandler: anyUser }, async (req, reply) => {
-    const body = z.object({ current: z.string().min(1), next: z.string().min(8).max(100) }).parse(req.body);
-    const u = await db('users').where({ id: req.user.sub }).first('password_hash');
-    if (!u?.password_hash || !(await bcrypt.compare(body.current, u.password_hash))) {
-      return reply.code(400).send({ error: 'wrong_password' });
-    }
-    await db('users').where({ id: req.user.sub }).update({ password_hash: await bcrypt.hash(body.next, 10) });
-    return { ok: true };
-  });
+adminRoutes.post('/me/consent', requireRole('guardian'), async (c) => {
+  const db = c.env.DB;
+  const sub = c.get('user').sub;
+  const kids = await all<{ student_id: number }>(db, 'SELECT student_id FROM guardian_students WHERE guardian_id = ?', sub);
+  if (kids.length) await db.batch(kids.map((k) => stmt(db, "INSERT OR IGNORE INTO consents (guardian_id, student_id, version) VALUES (?, ?, '1')", sub, k.student_id)));
+  return c.json({ ok: true });
+});
 
-  // ───── Definições da escola ─────
-  app.get('/school', { preHandler: staff }, async (req) =>
-    db('schools').where({ id: req.user.school_id }).first('id', 'name', 'timezone', 'min_exit_time', 'late_after'));
+adminRoutes.post('/auth/change-password', anyUser, async (c) => {
+  const body = z.object({ current: z.string().min(1), next: z.string().min(8).max(100) }).parse(await c.req.json());
+  const db = c.env.DB;
+  const sub = c.get('user').sub;
+  const u = await first<{ password_hash: string }>(db, 'SELECT password_hash FROM users WHERE id = ?', sub);
+  if (!(await verifyPassword(body.current, u?.password_hash))) return c.json({ error: 'wrong_password' }, 400);
+  await run(db, "UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?", await hashPassword(body.next), sub);
+  return c.json({ ok: true });
+});
 
-  app.put('/school', { preHandler: adminOnly }, async (req) => {
-    const body = z.object({ name: z.string().min(1).max(120), min_exit_time: hhmm, late_after: hhmm }).parse(req.body);
-    await db('schools').where({ id: req.user.school_id }).update(body);
-    return { ok: true };
-  });
+// ───── Definições da escola ─────
+adminRoutes.get('/school', staff, async (c) =>
+  c.json(await first(c.env.DB, 'SELECT id, name, timezone, min_exit_time, late_after FROM schools WHERE id = ?', c.get('user').school_id)));
 
-  // ───── Turmas ─────
-  app.get('/classes', { preHandler: staff }, async (req) => {
-    const q = db('classes as c')
-      .leftJoin('users as u', 'u.id', 'c.teacher_id')
-      .leftJoin('students as s', function () { this.on('s.class_id', 'c.id').andOn('s.active', db.raw('1')); })
-      .where('c.school_id', req.user.school_id)
-      .groupBy('c.id', 'c.name', 'c.teacher_id', 'u.name')
-      .orderBy('c.name')
-      .select('c.id', 'c.name', 'c.teacher_id', 'u.name as teacher_name')
-      .count({ students: 's.id' });
-    if (req.user.role === 'teacher') q.where('c.teacher_id', req.user.sub);
-    return (await q).map((r: any) => ({ ...r, students: Number(r.students) }));
-  });
+adminRoutes.put('/school', adminOnly, async (c) => {
+  const body = z.object({ name: z.string().trim().min(1).max(120), min_exit_time: hhmm, late_after: hhmm }).parse(await c.req.json());
+  await run(c.env.DB, "UPDATE schools SET name = ?, min_exit_time = ?, late_after = ?, updated_at = datetime('now') WHERE id = ?",
+    body.name, body.min_exit_time, body.late_after, c.get('user').school_id);
+  return c.json({ ok: true });
+});
 
-  const teacherOk = async (school_id: number | null, id: number | null | undefined) =>
-    id == null || !!(await db('users').where({ id, school_id, role: 'teacher' }).first('id'));
+// ───── Turmas ─────
+adminRoutes.get('/classes', staff, async (c) => {
+  const { sub, role, school_id } = c.get('user');
+  const rows = await all(c.env.DB,
+    `SELECT c.id, c.name, c.teacher_id, u.name AS teacher_name, COUNT(s.id) AS students
+     FROM classes c LEFT JOIN users u ON u.id = c.teacher_id LEFT JOIN students s ON s.class_id = c.id AND s.active = 1
+     WHERE c.school_id = ? ${role === 'teacher' ? 'AND c.teacher_id = ?' : ''}
+     GROUP BY c.id ORDER BY c.name`,
+    ...(role === 'teacher' ? [school_id, sub] : [school_id]));
+  return c.json(rows.map((r) => ({ ...r, students: Number(r.students) })));
+});
 
-  app.post('/classes', { preHandler: adminOnly }, async (req, reply) => {
-    const body = z.object({ name: z.string().min(1).max(60), teacher_id: z.number().int().nullable().optional() }).parse(req.body);
-    const school_id = req.user.school_id;
-    if (!(await teacherOk(school_id, body.teacher_id))) return reply.code(400).send({ error: 'invalid_teacher' });
-    try {
-      const [id] = await db('classes').insert({ school_id, name: body.name, teacher_id: body.teacher_id ?? null });
-      return reply.code(201).send({ id });
-    } catch (e) {
-      if (isDup(e)) return reply.code(409).send({ error: 'class_exists' });
-      throw e;
-    }
-  });
+const teacherOk = async (db: D1Database, school_id: number | null, id: number | null | undefined) =>
+  id == null || !!(await first(db, "SELECT id FROM users WHERE id = ? AND school_id = ? AND role = 'teacher'", id, school_id));
 
-  app.patch('/classes/:id', { preHandler: adminOnly }, async (req, reply) => {
-    const { id } = z.object({ id: z.coerce.number().int() }).parse(req.params);
-    const body = z.object({ name: z.string().min(1).max(60).optional(), teacher_id: z.number().int().nullable().optional() }).parse(req.body);
-    if (!(await teacherOk(req.user.school_id, body.teacher_id))) return reply.code(400).send({ error: 'invalid_teacher' });
-    try {
-      const n = await db('classes').where({ id, school_id: req.user.school_id }).update(body);
-      if (!n) return reply.code(404).send({ error: 'class_not_found' });
-    } catch (e) {
-      if (isDup(e)) return reply.code(409).send({ error: 'class_exists' });
-      throw e;
-    }
-    return { ok: true };
-  });
+adminRoutes.post('/classes', adminOnly, async (c) => {
+  const body = z.object({ name: z.string().trim().min(1).max(60), teacher_id: z.number().int().nullable().optional() }).parse(await c.req.json());
+  const school_id = c.get('user').school_id;
+  if (!(await teacherOk(c.env.DB, school_id, body.teacher_id))) return c.json({ error: 'invalid_teacher' }, 400);
+  try {
+    return c.json({ id: await insert(c.env.DB, 'INSERT INTO classes (school_id, name, teacher_id) VALUES (?, ?, ?)', school_id, body.name, body.teacher_id ?? null) }, 201);
+  } catch (e) {
+    if (isDup(e)) return c.json({ error: 'class_exists' }, 409);
+    throw e;
+  }
+});
 
-  app.delete('/classes/:id', { preHandler: adminOnly }, async (req) => {
-    const { id } = z.object({ id: z.coerce.number().int() }).parse(req.params);
-    await db('classes').where({ id, school_id: req.user.school_id }).del();
-    return { ok: true };
-  });
+adminRoutes.patch('/classes/:id', adminOnly, async (c) => {
+  const id = idParam(c.req.param('id'));
+  const body = z.object({ name: z.string().trim().min(1).max(60).optional(), teacher_id: z.number().int().nullable().optional() }).parse(await c.req.json());
+  const school_id = c.get('user').school_id;
+  if (!(await teacherOk(c.env.DB, school_id, body.teacher_id))) return c.json({ error: 'invalid_teacher' }, 400);
+  try {
+    const r = await run(c.env.DB,
+      `UPDATE classes SET name = COALESCE(?, name), teacher_id = CASE WHEN ? THEN ? ELSE teacher_id END WHERE id = ? AND school_id = ?`,
+      body.name ?? null, 'teacher_id' in body, body.teacher_id ?? null, id, school_id);
+    if (!r.meta.changes) return c.json({ error: 'class_not_found' }, 404);
+  } catch (e) {
+    if (isDup(e)) return c.json({ error: 'class_exists' }, 409);
+    throw e;
+  }
+  return c.json({ ok: true });
+});
 
-  // Alunos de uma turma, quem chegou hoje e a presença dos últimos dias letivos.
-  // O professor só abre as suas turmas; o gestor abre qualquer uma.
-  app.get('/classes/:id/attendance', { preHandler: staff }, async (req, reply) => {
-    const { id } = z.object({ id: z.coerce.number().int() }).parse(req.params);
-    const { days } = z.object({ days: z.coerce.number().int().min(3).max(31).default(10) }).parse(req.query);
-    const { sub, role, school_id } = req.user;
-    const cls = await db('classes').where({ id, school_id }).first('id', 'name', 'teacher_id');
-    if (!cls || (role === 'teacher' && cls.teacher_id !== sub)) return reply.code(404).send({ error: 'class_not_found' });
+adminRoutes.delete('/classes/:id', adminOnly, async (c) => {
+  await run(c.env.DB, 'DELETE FROM classes WHERE id = ? AND school_id = ?', idParam(c.req.param('id')), c.get('user').school_id);
+  return c.json({ ok: true });
+});
 
-    const school = await db('schools').where({ id: school_id }).first('timezone', 'late_after');
-    const tz = school.timezone;
-    const today = localParts(new Date(), tz).date;
-    const from = localParts(new Date(Date.now() - (days - 1) * 864e5), tz).date;
-    const students = await db('students').where({ school_id, class_id: id, active: 1 }).orderBy('name').select('id', 'name', 'photo_url');
-    const evs = students.length
-      ? await db('events').whereIn('student_id', students.map((s) => s.id)).where('local_date', '>=', from).select('student_id', 'type', 'late', 'tapped_at', 'local_date')
-      : [];
-    // Dias letivos: aqueles em que a escola registou alguma entrada (fins de semana ficam de fora).
-    const schoolDays: string[] = await db('events').where({ school_id, type: 'entry' }).where('local_date', '>=', from).groupBy('local_date').pluck('local_date');
-    const dayList = [...new Set([...schoolDays, today])].sort();
+// Alunos de uma turma, quem chegou hoje e a presença dos últimos dias letivos.
+// O professor só abre as suas turmas; o gestor abre qualquer uma.
+adminRoutes.get('/classes/:id/attendance', staff, async (c) => {
+  const id = idParam(c.req.param('id'));
+  const { days } = z.object({ days: z.coerce.number().int().min(3).max(31).default(10) }).parse(c.req.query());
+  const { sub, role, school_id } = c.get('user');
+  const db = c.env.DB;
+  const cls = await first<{ id: number; name: string; teacher_id: number | null }>(db, 'SELECT id, name, teacher_id FROM classes WHERE id = ? AND school_id = ?', id, school_id);
+  if (!cls || (role === 'teacher' && cls.teacher_id !== sub)) return c.json({ error: 'class_not_found' }, 404);
 
-    return {
-      class: { id: cls.id, name: cls.name },
-      today,
-      late_after: school.late_after,
-      days: dayList,
-      students: students.map((s) => {
-        const mine = evs.filter((e: any) => e.student_id === s.id) as any[];
-        const history = dayList.map((date) => {
-          const entry = mine.find((e) => e.local_date === date && e.type === 'entry');
-          return { date, status: entry ? (entry.late ? 'late' : 'present') : date === today ? 'pending' : 'absent' };
-        });
-        return { ...s, ...daySummary(mine.filter((e) => e.local_date === today), tz), history };
-      }),
-    };
-  });
+  const school = await first<{ timezone: string; late_after: string }>(db, 'SELECT timezone, late_after FROM schools WHERE id = ?', school_id);
+  const tz = school?.timezone ?? 'UTC';
+  const today = localParts(new Date(), tz).date;
+  const from = localParts(new Date(Date.now() - (days - 1) * 864e5), tz).date;
+  const students = await all<{ id: number; name: string; photo_url: string | null }>(db, 'SELECT id, name, photo_url FROM students WHERE school_id = ? AND class_id = ? AND active = 1 ORDER BY name', school_id, id);
+  const evs = students.length
+    ? await all<DayEvent & { student_id: number; local_date: string }>(db,
+      `SELECT student_id, type, late, tapped_at, local_date FROM events WHERE student_id IN (${marks(students.length)}) AND local_date >= ?`, ...students.map((s) => s.id), from)
+    : [];
+  // Dias letivos: aqueles em que a escola registou alguma entrada (fins de semana ficam de fora).
+  const schoolDays = (await all<{ local_date: string }>(db, "SELECT DISTINCT local_date FROM events WHERE school_id = ? AND type = 'entry' AND local_date >= ?", school_id, from)).map((r) => r.local_date);
+  const dayList = [...new Set([...schoolDays, today])].sort();
 
-  // ───── Professores ─────
-  app.get('/teachers', { preHandler: adminOnly }, async (req) =>
-    db('users').where({ school_id: req.user.school_id, role: 'teacher' }).orderBy('name').select('id', 'name', 'email', 'active'));
-
-  app.post('/teachers', { preHandler: adminOnly }, async (req, reply) => {
-    const body = z.object({ name: z.string().min(1), email: z.string().email() }).parse(req.body);
-    const temp = tempPassword();
-    try {
-      const [id] = await db('users').insert({
-        school_id: req.user.school_id, name: body.name, email: body.email.toLowerCase(),
-        role: 'teacher', password_hash: await bcrypt.hash(temp, 10),
+  return c.json({
+    class: { id: cls.id, name: cls.name },
+    today,
+    late_after: school?.late_after,
+    days: dayList,
+    students: students.map((s) => {
+      const mine = evs.filter((e) => e.student_id === s.id);
+      const history = dayList.map((date) => {
+        const entry = mine.find((e) => e.local_date === date && e.type === 'entry');
+        return { date, status: entry ? (entry.late ? 'late' : 'present') : date === today ? 'pending' : 'absent' };
       });
-      return reply.code(201).send({ id, temporary_password: temp });
-    } catch (e) {
-      if (isDup(e)) return reply.code(409).send({ error: 'email_in_use' });
-      throw e;
-    }
+      return { ...s, ...daySummary(mine.filter((e) => e.local_date === today), tz), history };
+    }),
   });
+});
 
-  // Nova senha temporária para professor ou encarregado da mesma escola.
-  app.post('/users/:id/reset-password', { preHandler: adminOnly }, async (req, reply) => {
-    const { id } = z.object({ id: z.coerce.number().int() }).parse(req.params);
-    const temp = tempPassword();
-    const n = await db('users').where({ id, school_id: req.user.school_id }).whereIn('role', ['teacher', 'guardian'])
-      .update({ password_hash: await bcrypt.hash(temp, 10) });
-    if (!n) return reply.code(404).send({ error: 'user_not_found' });
-    return { temporary_password: temp };
-  });
+// ───── Professores ─────
+adminRoutes.get('/teachers', adminOnly, async (c) =>
+  c.json(await all(c.env.DB, "SELECT id, name, username, email, active FROM users WHERE school_id = ? AND role = 'teacher' ORDER BY name", c.get('user').school_id)));
 
-  app.patch('/users/:id', { preHandler: adminOnly }, async (req, reply) => {
-    const { id } = z.object({ id: z.coerce.number().int() }).parse(req.params);
-    const { active } = z.object({ active: z.boolean() }).parse(req.body);
-    const n = await db('users').where({ id, school_id: req.user.school_id }).whereIn('role', ['teacher', 'guardian']).update({ active });
-    if (!n) return reply.code(404).send({ error: 'user_not_found' });
-    return { ok: true };
-  });
+adminRoutes.post('/teachers', adminOnly, async (c) => {
+  const body = z.object({ name: z.string().trim().min(1).max(120), username: username.optional(), email }).parse(await c.req.json());
+  const db = c.env.DB;
+  const temp = tempPassword();
+  const user = body.username ?? await uniqueUsername(db, body.name);
+  try {
+    const id = await insert(db, "INSERT INTO users (school_id, name, username, email, role, password_hash) VALUES (?, ?, ?, ?, 'teacher', ?)",
+      c.get('user').school_id, body.name, user, body.email?.toLowerCase() ?? null, await hashPassword(temp));
+    return c.json({ id, username: user, temporary_password: temp }, 201);
+  } catch (e) {
+    if (isDup(e)) return c.json({ error: 'username_in_use' }, 409);
+    throw e;
+  }
+});
 
-  // ───── Encarregados ─────
-  app.get('/guardians', { preHandler: adminOnly }, async (req) => {
-    const school_id = req.user.school_id;
-    const guardians = await db('users').where({ school_id, role: 'guardian' }).orderBy('name').select('id', 'name', 'email', 'phone', 'active');
-    const links = await db('guardian_students as g').join('students as s', 's.id', 'g.student_id')
-      .whereIn('g.guardian_id', guardians.map((g) => g.id)).select('g.guardian_id', 's.id', 's.name');
-    const subs = await db('push_subscriptions').whereIn('user_id', guardians.map((g) => g.id)).select('user_id').count({ n: 'id' }).groupBy('user_id');
-    return guardians.map((g) => ({
-      ...g,
-      students: links.filter((l) => l.guardian_id === g.id).map((l) => ({ id: l.id, name: l.name })),
-      push_devices: Number(subs.find((s: any) => s.user_id === g.id)?.n ?? 0),
-    }));
-  });
+// Nova senha temporária para professor ou encarregado da mesma escola.
+adminRoutes.post('/users/:id/reset-password', adminOnly, async (c) => {
+  const id = idParam(c.req.param('id'));
+  const temp = tempPassword();
+  const r = await run(c.env.DB, "UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ? AND school_id = ? AND role IN ('teacher', 'guardian')",
+    await hashPassword(temp), id, c.get('user').school_id);
+  if (!r.meta.changes) return c.json({ error: 'user_not_found' }, 404);
+  const u = await first<{ username: string }>(c.env.DB, 'SELECT username FROM users WHERE id = ?', id);
+  return c.json({ username: u?.username, temporary_password: temp });
+});
 
-  app.put('/guardians/:id/students', { preHandler: adminOnly }, async (req, reply) => {
-    const { id } = z.object({ id: z.coerce.number().int() }).parse(req.params);
-    const { student_ids } = z.object({ student_ids: z.array(z.number().int()) }).parse(req.body);
-    const school_id = req.user.school_id;
-    const g = await db('users').where({ id, school_id, role: 'guardian' }).first('id');
-    if (!g) return reply.code(404).send({ error: 'user_not_found' });
-    const owned = student_ids.length ? await db('students').where({ school_id }).whereIn('id', student_ids).pluck('id') : [];
-    if (owned.length !== student_ids.length) return reply.code(400).send({ error: 'invalid_students' });
-    await db.transaction(async (trx) => {
-      await trx('guardian_students').where({ guardian_id: id }).del();
-      if (owned.length) await trx('guardian_students').insert(owned.map((student_id) => ({ guardian_id: id, student_id })));
-    });
-    return { ok: true };
-  });
+adminRoutes.patch('/users/:id', adminOnly, async (c) => {
+  const id = idParam(c.req.param('id'));
+  const { active } = z.object({ active: z.boolean() }).parse(await c.req.json());
+  const r = await run(c.env.DB, "UPDATE users SET active = ?, updated_at = datetime('now') WHERE id = ? AND school_id = ? AND role IN ('teacher', 'guardian')", active, id, c.get('user').school_id);
+  if (!r.meta.changes) return c.json({ error: 'user_not_found' }, 404);
+  return c.json({ ok: true });
+});
 
-  // ───── Alunos (edição) ─────
-  app.patch('/students/:id', { preHandler: adminOnly }, async (req, reply) => {
-    const { id } = z.object({ id: z.coerce.number().int() }).parse(req.params);
-    const body = z.object({
-      name: z.string().min(1).optional(), class_id: z.number().int().nullable().optional(), active: z.boolean().optional(),
-    }).parse(req.body);
-    const school_id = req.user.school_id;
-    if (body.class_id != null && !(await db('classes').where({ id: body.class_id, school_id }).first('id'))) {
-      return reply.code(400).send({ error: 'invalid_class' });
-    }
-    const n = await db('students').where({ id, school_id }).update(body);
-    if (!n) return reply.code(404).send({ error: 'student_not_found' });
-    return { ok: true };
-  });
+// ───── Encarregados ─────
+adminRoutes.get('/guardians', adminOnly, async (c) => {
+  const school_id = c.get('user').school_id;
+  const db = c.env.DB;
+  const guardians = await all<{ id: number }>(db, "SELECT id, name, username, email, phone, active FROM users WHERE school_id = ? AND role = 'guardian' ORDER BY name", school_id);
+  if (!guardians.length) return c.json([]);
+  const ids = guardians.map((g) => g.id);
+  const links = await all<{ guardian_id: number; id: number; name: string }>(db,
+    `SELECT g.guardian_id, s.id, s.name FROM guardian_students g JOIN students s ON s.id = g.student_id WHERE g.guardian_id IN (${marks(ids.length)})`, ...ids);
+  const subs = await all<{ user_id: number; n: number }>(db, `SELECT user_id, COUNT(id) AS n FROM push_subscriptions WHERE user_id IN (${marks(ids.length)}) GROUP BY user_id`, ...ids);
+  return c.json(guardians.map((g) => ({
+    ...g,
+    students: links.filter((l) => l.guardian_id === g.id).map((l) => ({ id: l.id, name: l.name })),
+    push_devices: Number(subs.find((s) => s.user_id === g.id)?.n ?? 0),
+  })));
+});
 
+adminRoutes.put('/guardians/:id/students', adminOnly, async (c) => {
+  const id = idParam(c.req.param('id'));
+  const { student_ids } = z.object({ student_ids: z.array(z.number().int()) }).parse(await c.req.json());
+  const school_id = c.get('user').school_id;
+  const db = c.env.DB;
+  if (!(await first(db, "SELECT id FROM users WHERE id = ? AND school_id = ? AND role = 'guardian'", id, school_id))) return c.json({ error: 'user_not_found' }, 404);
+  const owned = student_ids.length ? await all(db, `SELECT id FROM students WHERE school_id = ? AND id IN (${marks(student_ids.length)})`, school_id, ...student_ids) : [];
+  if (owned.length !== student_ids.length) return c.json({ error: 'invalid_students' }, 400);
+  // batch = tudo ou nada.
+  await db.batch([
+    stmt(db, 'DELETE FROM guardian_students WHERE guardian_id = ?', id),
+    ...student_ids.map((sid) => stmt(db, 'INSERT INTO guardian_students (guardian_id, student_id) VALUES (?, ?)', id, sid)),
+  ]);
+  return c.json({ ok: true });
+});
 
-  // ───── Importar alunos (CSV já lido no navegador) ─────
-  // Cria turmas que faltem, alunos e encarregados (reaproveita o encarregado se o email já existir).
-  app.post('/import/students', { preHandler: adminOnly }, async (req) => {
-    const body = z.object({
-      rows: z.array(z.object({
-        name: z.string().trim().min(1).max(120),
-        class: z.string().trim().max(60).optional(),
-        card_uid: z.string().trim().max(32).optional(),
-        guardian_name: z.string().trim().max(120).optional(),
-        guardian_email: z.string().trim().email().optional().or(z.literal('')),
-      })).min(1).max(500),
-    }).parse(req.body);
-    const school_id = req.user.school_id!;
-    const classes = new Map<string, number>((await db('classes').where({ school_id }).select('id', 'name')).map((c: any) => [String(c.name).toLowerCase(), c.id] as [string, number]));
-    const result = { students: 0, classes: 0, guardians: 0, links: 0, credentials: [] as { name: string; email: string; temporary_password: string }[], errors: [] as { row: number; name: string; error: string }[] };
-    const guardianByEmail = new Map<string, number>();
+// ───── Alunos (edição) ─────
+adminRoutes.patch('/students/:id', adminOnly, async (c) => {
+  const id = idParam(c.req.param('id'));
+  const body = z.object({ name: z.string().trim().min(1).max(120).optional(), class_id: z.number().int().nullable().optional(), active: z.boolean().optional() }).parse(await c.req.json());
+  const school_id = c.get('user').school_id;
+  const db = c.env.DB;
+  if (body.class_id != null && !(await first(db, 'SELECT id FROM classes WHERE id = ? AND school_id = ?', body.class_id, school_id))) return c.json({ error: 'invalid_class' }, 400);
+  const r = await run(db,
+    `UPDATE students SET name = COALESCE(?, name), class_id = CASE WHEN ? THEN ? ELSE class_id END, active = COALESCE(?, active), updated_at = datetime('now')
+     WHERE id = ? AND school_id = ?`,
+    body.name ?? null, 'class_id' in body, body.class_id ?? null, body.active ?? null, id, school_id);
+  if (!r.meta.changes) return c.json({ error: 'student_not_found' }, 404);
+  return c.json({ ok: true });
+});
 
-    for (const [i, r] of body.rows.entries()) {
-      // Tudo o que a linha cria fica numa transação; só se conta (e só se memoriza) depois de gravar.
-      const made = { newClass: null as [string, number] | null, newGuardian: null as { email: string; id: number; name: string; temp: string } | null, linked: false };
-      try {
-        await db.transaction(async (trx) => {
-          let class_id: number | null = null;
-          if (r.class) {
-            const key = r.class.toLowerCase();
-            class_id = classes.get(key) ?? null;
-            if (class_id === null) { [class_id] = await trx('classes').insert({ school_id, name: r.class }); made.newClass = [key, class_id!]; }
-          }
-          const [sid] = await trx('students').insert({ school_id, class_id, name: r.name, card_uid: r.card_uid ? r.card_uid.replace(/[:\s]/g, '').toUpperCase() : null });
-          const email = r.guardian_email?.toLowerCase();
-          if (email) {
-            let gid = guardianByEmail.get(email);
-            if (!gid) {
-              const found = await trx('users').where({ email }).first('id', 'role', 'school_id');
-              if (found && (found.role !== 'guardian' || found.school_id !== school_id)) throw new Error('email_in_use');
-              if (found) gid = found.id;
-              else {
-                const temp = tempPassword();
-                const name = r.guardian_name || email;
-                [gid] = await trx('users').insert({ school_id, name, email, role: 'guardian', password_hash: await bcrypt.hash(temp, 10) });
-                made.newGuardian = { email, id: gid!, name, temp };
-              }
-            }
-            await trx('guardian_students').insert({ guardian_id: gid, student_id: sid }).onConflict().ignore();
-            made.linked = true;
-            if (!made.newGuardian) guardianByEmail.set(email, gid!);
-          }
-        });
-        result.students++;
-        if (made.newClass) { classes.set(made.newClass[0], made.newClass[1]); result.classes++; }
-        if (made.newGuardian) {
-          guardianByEmail.set(made.newGuardian.email, made.newGuardian.id);
-          result.guardians++;
-          result.credentials.push({ name: made.newGuardian.name, email: made.newGuardian.email, temporary_password: made.newGuardian.temp });
-        }
-        if (made.linked) result.links++;
-      } catch (e: any) {
-        result.errors.push({ row: i + 1, name: r.name, error: e?.code === 'ER_DUP_ENTRY' ? 'card_in_use' : e?.message === 'email_in_use' ? 'email_in_use' : 'invalid' });
+// ───── Importar alunos (CSV já lido no navegador) ─────
+// Cria turmas que faltem, alunos e encarregados (reaproveita o encarregado pelo email ou, sem email, pelo nome).
+adminRoutes.post('/import/students', adminOnly, async (c) => {
+  const body = z.object({
+    rows: z.array(z.object({
+      name: z.string().trim().min(1).max(120),
+      class: z.string().trim().max(60).optional(),
+      card_uid: z.string().trim().max(32).optional(),
+      guardian_name: z.string().trim().max(120).optional(),
+      guardian_email: email,
+    })).min(1).max(500),
+  }).parse(await c.req.json());
+  const school_id = c.get('user').school_id!;
+  const db = c.env.DB;
+  const classes = new Map((await all<{ id: number; name: string }>(db, 'SELECT id, name FROM classes WHERE school_id = ?', school_id)).map((r) => [r.name.toLowerCase(), r.id] as [string, number]));
+  const result = { students: 0, classes: 0, guardians: 0, links: 0, credentials: [] as { name: string; username: string; temporary_password: string }[], errors: [] as { row: number; name: string; error: string }[] };
+  const known = new Map<string, number>(); // email ou nome do encarregado → id
+
+  for (const [i, r] of body.rows.entries()) {
+    try {
+      let class_id: number | null = null;
+      if (r.class) {
+        const key = r.class.toLowerCase();
+        class_id = classes.get(key) ?? null;
+        if (class_id === null) { class_id = await insert(db, 'INSERT INTO classes (school_id, name) VALUES (?, ?)', school_id, r.class); classes.set(key, class_id); result.classes++; }
       }
+      const sid = await insert(db, 'INSERT INTO students (school_id, class_id, name, card_uid) VALUES (?, ?, ?, ?)', school_id, class_id, r.name, normalizeCard(r.card_uid));
+      result.students++;
+
+      const gEmail = r.guardian_email?.toLowerCase();
+      const key = gEmail ?? (r.guardian_name ? `nome:${r.guardian_name.toLowerCase()}` : null);
+      if (key) {
+        let gid = known.get(key);
+        if (!gid && gEmail) {
+          const found = await first<{ id: number; role: string; school_id: number | null }>(db, 'SELECT id, role, school_id FROM users WHERE email = ?', gEmail);
+          if (found && (found.role !== 'guardian' || found.school_id !== school_id)) throw new Error('email_in_use');
+          if (found) gid = found.id;
+        }
+        if (!gid) {
+          const name = r.guardian_name || gEmail!;
+          const temp = tempPassword();
+          const user = await uniqueUsername(db, name);
+          gid = await insert(db, "INSERT INTO users (school_id, name, username, email, role, password_hash) VALUES (?, ?, ?, ?, 'guardian', ?)", school_id, name, user, gEmail ?? null, await hashPassword(temp));
+          result.guardians++;
+          result.credentials.push({ name, username: user, temporary_password: temp });
+        }
+        known.set(key, gid);
+        await run(db, 'INSERT OR IGNORE INTO guardian_students (guardian_id, student_id) VALUES (?, ?)', gid, sid);
+        result.links++;
+      }
+    } catch (e) {
+      result.errors.push({ row: i + 1, name: r.name, error: isDup(e) ? 'card_in_use' : (e as Error)?.message === 'email_in_use' ? 'email_in_use' : 'invalid' });
     }
-    return result;
-  });
+  }
+  return c.json(result);
+});
 
-  // ───── Dispositivos ─────
-  app.get('/devices', { preHandler: adminOnly }, async (req) =>
-    db('devices').where({ school_id: req.user.school_id }).orderBy('id', 'desc').select('id', 'name', 'location', 'active', 'last_seen_at'));
+// ───── Dispositivos ─────
+adminRoutes.get('/devices', adminOnly, async (c) =>
+  c.json(await all(c.env.DB, 'SELECT id, name, location, active, last_seen_at FROM devices WHERE school_id = ? ORDER BY id DESC', c.get('user').school_id)));
 
-  // ───── Histórico e relatório ─────
-  const eventsQuery = (req: any, q: { from?: string; to?: string; type?: string; student_id?: number }) => {
-    const query = db('events as e')
-      .join('students as s', 's.id', 'e.student_id')
-      .leftJoin('classes as c', 'c.id', 's.class_id')
-      .where('e.school_id', req.user.school_id)
-      .orderBy('e.tapped_at', 'desc')
-      .select('e.id', 'e.type', 'e.note', 'e.late', 'e.tapped_at', 'e.local_date', 's.id as student_id', 's.name as student_name', 'c.name as class_name');
-    if (req.user.role === 'teacher') query.where('c.teacher_id', req.user.sub);
-    if (q.from) query.where('e.local_date', '>=', q.from);
-    if (q.to) query.where('e.local_date', '<=', q.to);
-    if (q.type) query.where('e.type', q.type);
-    if (q.student_id) query.where('e.student_id', q.student_id);
-    return query;
+// ───── Histórico e relatório ─────
+const filters = z.object({
+  from: z.string().date().optional(), to: z.string().date().optional(),
+  type: z.enum(['entry', 'lunch', 'exit', 'incident']).optional(), student_id: z.coerce.number().int().optional(),
+});
+// Teto da listagem do histórico; o relatório CSV vai até 50 000.
+const EVENTS_LIMIT = 2000;
+
+function eventsQuery(c: { get: (k: 'user') => { sub: number; role: string; school_id: number | null } }, q: z.infer<typeof filters>, limit: number) {
+  const { sub, role, school_id } = c.get('user');
+  const where = ['e.school_id = ?'];
+  const params: unknown[] = [school_id];
+  if (role === 'teacher') { where.push('c.teacher_id = ?'); params.push(sub); }
+  if (q.from) { where.push('e.local_date >= ?'); params.push(q.from); }
+  if (q.to) { where.push('e.local_date <= ?'); params.push(q.to); }
+  if (q.type) { where.push('e.type = ?'); params.push(q.type); }
+  if (q.student_id) { where.push('e.student_id = ?'); params.push(q.student_id); }
+  return {
+    sql: `SELECT e.id, e.type, e.note, e.late, e.tapped_at, e.local_date, s.id AS student_id, s.name AS student_name, c.name AS class_name
+          FROM events e JOIN students s ON s.id = e.student_id LEFT JOIN classes c ON c.id = s.class_id
+          WHERE ${where.join(' AND ')} ORDER BY e.tapped_at DESC LIMIT ${limit}`,
+    params,
   };
-  const filters = z.object({
-    from: z.string().date().optional(), to: z.string().date().optional(),
-    type: z.enum(['entry', 'lunch', 'exit', 'incident']).optional(), student_id: z.coerce.number().int().optional(),
-  });
-
-  const schoolTz = async (school_id: number | null) => (await db('schools').where({ id: school_id }).first('timezone'))?.timezone ?? 'UTC';
-
-  app.get('/events', { preHandler: staff }, async (req) => {
-    const [rows, tz] = await Promise.all([eventsQuery(req, filters.parse(req.query)).limit(400), schoolTz(req.user.school_id)]);
-    return rows.map((r: any) => ({ ...r, local_time: utcToLocalHHMM(r.tapped_at, tz) }));
-  });
-
-  app.get('/reports/attendance.csv', { preHandler: adminOnly }, async (req, reply) => {
-    const [rows, tz] = await Promise.all([eventsQuery(req, filters.parse(req.query)).limit(50_000), schoolTz(req.user.school_id)]);
-    const names: Record<string, string> = { entry: 'Entrada', lunch: 'Almoço', exit: 'Saída', incident: 'Ocorrência' };
-    const lines = [['Data', 'Hora', 'Aluno', 'Turma', 'Tipo', 'Atraso', 'Nota'].join(';')];
-    for (const r of rows) {
-      lines.push([r.local_date, utcToLocalHHMM(r.tapped_at, tz), r.student_name, r.class_name ?? '', names[r.type], r.late ? 'Sim' : '', r.note ?? ''].map(csvCell).join(';'));
-    }
-    return reply.header('content-type', 'text/csv; charset=utf-8').header('content-disposition', 'attachment; filename="presencas.csv"').send('﻿' + lines.join('\n'));
-  });
-
-  // ───── Plataforma (super_admin) ─────
-  app.get('/schools', { preHandler: requireRole('super_admin') }, async () => {
-    const schools = await db('schools').orderBy('name').select('id', 'name', 'slug', 'active', 'created_at');
-    const count = async (table: string) => {
-      const rows = await db(table).select('school_id').count({ n: 'id' }).groupBy('school_id');
-      return (id: number) => Number(rows.find((r: any) => r.school_id === id)?.n ?? 0);
-    };
-    const [students, devices] = await Promise.all([count('students'), count('devices')]);
-    return schools.map((s) => ({ ...s, students: students(s.id), devices: devices(s.id) }));
-  });
-
-  app.patch('/schools/:id', { preHandler: requireRole('super_admin') }, async (req) => {
-    const { id } = z.object({ id: z.coerce.number().int() }).parse(req.params);
-    const { active } = z.object({ active: z.boolean() }).parse(req.body);
-    await db('schools').where({ id }).update({ active });
-    return { ok: true };
-  });
 }
+
+adminRoutes.get('/events', staff, async (c) => {
+  const q = eventsQuery(c, filters.parse(c.req.query()), EVENTS_LIMIT);
+  const [rows, tz] = await Promise.all([all<{ tapped_at: string }>(c.env.DB, q.sql, ...q.params), schoolTz(c.env.DB, c.get('user').school_id)]);
+  return c.json(rows.map((r) => ({ ...r, local_time: utcToLocalHHMM(r.tapped_at, tz) })));
+});
+
+adminRoutes.get('/reports/attendance.csv', adminOnly, async (c) => {
+  const q = eventsQuery(c, filters.parse(c.req.query()), 50_000);
+  const [rows, tz] = await Promise.all([all<Record<string, string>>(c.env.DB, q.sql, ...q.params), schoolTz(c.env.DB, c.get('user').school_id)]);
+  const names: Record<string, string> = { entry: 'Entrada', lunch: 'Almoço', exit: 'Saída', incident: 'Ocorrência' };
+  const lines = [['Data', 'Hora', 'Aluno', 'Turma', 'Tipo', 'Atraso', 'Nota'].join(';')];
+  for (const r of rows) {
+    lines.push([r.local_date, utcToLocalHHMM(r.tapped_at, tz), r.student_name, r.class_name ?? '', names[r.type], Number(r.late) ? 'Sim' : '', r.note ?? ''].map(csvCell).join(';'));
+  }
+  return c.body('﻿' + lines.join('\n'), 200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="presencas.csv"' });
+});
+
+// ───── Plataforma (super_admin) ─────
+adminRoutes.get('/schools', requireRole('super_admin'), async (c) =>
+  c.json(await all(c.env.DB,
+    `SELECT s.id, s.name, s.slug, s.active, s.created_at,
+       (SELECT COUNT(*) FROM students st WHERE st.school_id = s.id) AS students,
+       (SELECT COUNT(*) FROM devices d WHERE d.school_id = s.id) AS devices
+     FROM schools s ORDER BY s.name`)));
+
+adminRoutes.patch('/schools/:id', requireRole('super_admin'), async (c) => {
+  const { active } = z.object({ active: z.boolean() }).parse(await c.req.json());
+  await run(c.env.DB, "UPDATE schools SET active = ?, updated_at = datetime('now') WHERE id = ?", active, idParam(c.req.param('id')));
+  return c.json({ ok: true });
+});

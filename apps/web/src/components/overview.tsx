@@ -36,7 +36,7 @@ function Tile({ label, icon, value, unit, delta, spark, hint, delay }: {
     <div className="card anim-rise flex flex-col justify-between gap-3 p-4" style={{ animationDelay: `${delay}ms` }}>
       <p className="flex items-center gap-2.5 text-sm text-muted"><IconChip>{icon}</IconChip>{label}</p>
       <div className="flex items-end justify-between gap-2">
-        <p className="font-display text-4xl leading-none">{v}{unit && <span className="ml-0.5 text-xl text-muted">{unit}</span>}</p>
+        <p className="font-display text-figure tabular-nums">{v}{unit && <span className="ml-0.5 text-title3 text-muted">{unit}</span>}</p>
         <Sparkline values={spark} />
       </div>
       <div className="min-h-4">{delta ?? (hint && <span className="text-xs text-muted">{hint}</span>)}</div>
@@ -119,10 +119,10 @@ export function Overview({ rows, stats }: { rows: TodayRow[] | null; stats: Stat
           <div className="relative">
             <p className="text-sm font-medium text-white/80">Na escola agora</p>
             <p className="mt-2 flex items-baseline gap-3">
-              <span className="font-display text-[clamp(4.5rem,9vw,7rem)] leading-none">{here}</span>
-              <span className="text-lg text-white/80">de {d.total} alunos</span>
+              <span className="font-display text-display tabular-nums">{here}</span>
+              <span className="text-body text-white/80">de {d.total} alunos</span>
             </p>
-            <p className="mt-3 font-display text-xl text-accent">{d.attended === 0 ? 'Ainda ninguém chegou hoje.' : `${d.attended} ${d.attended === 1 ? 'chegou' : 'chegaram'} bem hoje.`}</p>
+            <p className="mt-2 font-display text-title3 text-accent">{d.attended === 0 ? 'Ainda ninguém chegou hoje.' : `${d.attended} ${d.attended === 1 ? 'chegou' : 'chegaram'} bem hoje.`}</p>
           </div>
           <div className="relative">
             <div className="flex h-3.5 overflow-hidden rounded-[7px] bg-white/[0.18]" role="img" aria-label={`${onTime} a tempo, ${lateHere} em atraso, ${d.left} já saíram, ${d.absent} ausentes`}>
@@ -139,7 +139,7 @@ export function Overview({ rows, stats }: { rows: TodayRow[] | null; stats: Stat
               ].map((s2) => (
                 <li key={s2.l}>
                   <p className="flex items-center gap-1.5 text-xs text-white/75"><span className="h-2.5 w-2.5 rounded-[3px] ring-1 ring-inset ring-white/30" style={{ background: s2.c }} aria-hidden />{s2.l}</p>
-                  <p className="font-display text-2xl tabular-nums leading-tight">{s2.n}</p>
+                  <p className="font-display text-title2 tabular-nums">{s2.n}</p>
                 </li>
               ))}
             </ul>

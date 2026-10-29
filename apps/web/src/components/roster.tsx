@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Avatar, Spinner } from './ui';
+import { useState } from 'react';
+import { Avatar } from './ui';
+import { ChoiceGroup, Field, FormDialog, FormSection } from './form';
 import type { useSession } from '@/lib/auth';
 
 /** Entrada, almoço e saída em três passos. O que já aconteceu fica preenchido. */
@@ -53,51 +54,35 @@ export function IncidentDialog({ student, call, onClose, onDone }: {
   student: { id: number; name: string }; call: ReturnType<typeof useSession>['call']; onClose: () => void; onDone: () => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  const [error, setError] = useState<string | null>(null);
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setBusy(true); setError(false);
     const f = new FormData(e.currentTarget);
+    setBusy(true); setError(null);
     try {
       await call('/incidents', { method: 'POST', body: JSON.stringify({ student_id: student.id, category: f.get('category'), note: f.get('note') }) });
       onDone();
-    } catch { setError(true); setBusy(false); }
+    } catch { setError('Não foi possível registar a ocorrência. Tente de novo.'); setBusy(false); }
   }
 
   return (
-    <div className="anim-fade fixed inset-0 z-20 flex items-end justify-center bg-[rgb(22_32_58/0.22)] p-4 backdrop-blur-sm sm:items-center" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <form role="dialog" aria-modal="true" aria-labelledby="inc-title" onSubmit={submit} className="card anim-pop flex w-full max-w-md flex-col gap-4 p-6">
-        <div className="flex items-center gap-3">
-          <Avatar name={student.name} size={40} />
-          <div>
-            <h2 id="inc-title" className="font-display text-xl leading-tight">Registar ocorrência</h2>
-            <p className="text-sm text-muted">{student.name}</p>
-          </div>
-        </div>
-        <label className="flex flex-col gap-1.5 text-sm font-medium">
-          Tipo
-          <select name="category" className="input" autoFocus>
-            <option value="health">Saúde</option><option value="behavior">Comportamento</option><option value="other">Outro</option>
-          </select>
-        </label>
-        <label className="flex flex-col gap-1.5 text-sm font-medium">
-          O que aconteceu
-          <textarea name="note" required maxLength={400} rows={4} className="input resize-none" placeholder="Ex.: dor de cabeça, está na secretaria." />
-        </label>
-        <p className="text-xs text-muted">Os encarregados recebem um aviso genérico e veem o detalhe dentro do app.</p>
-        {error && <p role="alert" className="rounded-lg bg-bad-bg px-3 py-2 text-sm text-bad">Não foi possível registar a ocorrência. Tente de novo.</p>}
-        <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="btn btn-ghost">Cancelar</button>
-          <button disabled={busy} className="btn btn-primary">{busy ? <><Spinner /> A registar</> : 'Registar ocorrência'}</button>
-        </div>
-      </form>
-    </div>
+    <FormDialog
+      title="Registar ocorrência" subtitle={student.name} media={<Avatar name={student.name} size={36} />}
+      onClose={onClose} onSubmit={submit} busy={busy} error={error}
+      submitLabel="Registar ocorrência" busyLabel="A registar"
+      footnote="A família recebe um aviso genérico e vê o detalhe na app."
+    >
+      <FormSection>
+        <ChoiceGroup
+          name="category" label="Tipo" defaultValue="health"
+          options={[
+            { value: 'health', label: 'Saúde', tone: 'var(--bad)' },
+            { value: 'behavior', label: 'Comportamento', tone: 'var(--late)' },
+            { value: 'other', label: 'Outro', tone: 'var(--gone)' },
+          ]}
+        />
+        <Field label="O que aconteceu"><textarea name="note" required autoFocus maxLength={400} rows={4} className="input resize-none" placeholder="Ex.: dor de cabeça, está na secretaria." /></Field>
+      </FormSection>
+    </FormDialog>
   );
 }

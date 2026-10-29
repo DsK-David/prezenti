@@ -1,0 +1,14 @@
+{
+  "name": "prezenti",
+  "private": true,
+  "scripts": {
+    "dev": "trap 'kill 0' INT TERM; npm --prefix apps/api run dev & npm --prefix apps/web run dev & wait",
+    "dev:api": "npm --prefix apps/api run dev",
+    "dev:web": "npm --prefix apps/web run dev",
+    "install:all": "npm --prefix apps/api install && npm --prefix apps/web install",
+    "db:migrate": "npm --prefix apps/api run db:migrate",
+    "db:seed": "npm --prefix apps/api run db:seed",
+    "tunnel": "npx --yes cloudflared tunnel --url http://localhost:3000",
+    "deploy": "npm --prefix apps/web run deploy"
+  }
+}

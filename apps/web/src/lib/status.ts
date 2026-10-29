@@ -9,5 +9,5 @@ export const STATUS: Record<Status, { label: string; tone: string }> = {
 
 export interface TodayRow {
   id: number; name: string; class_name: string | null; status: Status; late: boolean;
-  entry_time: string | null; lunch: boolean; exit_time: string | null;
+  entry_time: string | null; lunch: boolean; lunch_time: string | null; exit_time: string | null;
 }

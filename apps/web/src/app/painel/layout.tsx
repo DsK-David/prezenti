@@ -2,9 +2,11 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+
+const COLLAPSED_KEY = 'prezenti.menu-recolhido';
 import { homeFor, logout, useSession } from '@/lib/auth';
-import { Avatar, Rings, Wordmark } from '@/components/ui';
+import { Avatar, RingMark } from '@/components/ui';
 
 const ROLE = { admin: 'Gestor', teacher: 'Professor', super_admin: 'Plataforma', guardian: 'Encarregado' } as const;
 
@@ -21,7 +23,7 @@ type IconKey = keyof typeof ICONS;
 
 function Icon({ d }: { d: IconKey }) {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       {ICONS[d]}
     </svg>
   );
@@ -43,71 +45,158 @@ const GROUPS = (admin: boolean): Array<{ title: string; items: Item[] }> => [
   ] : [{ title: 'Conta', items: [{ href: '/painel/definicoes', label: 'Definições', icon: 'settings' as const }] }]),
 ];
 
+function Glyph({ d, size = 18 }: { d: string; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={d} /></svg>
+  );
+}
+const SIDEBAR = 'M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6Zm5-2v16';
+const MENU = 'M4 7h16M4 12h16M4 17h16';
+const CLOSE = 'M6 6l12 12M18 6 6 18';
+const LOGOUT = 'M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l4-4-4-4M14 12H4';
+
+const initials = (name: string) => name.split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
+
 export default function PainelLayout({ children }: { children: React.ReactNode }) {
-  const { session, ready } = useSession();
+  const { session, ready, call } = useSession();
   const path = usePathname();
+  const [school, setSchool] = useState<string | null>(null);
+  // Recolhido só no computador; a escolha fica neste navegador.
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return typeof window !== 'undefined' && localStorage.getItem(COLLAPSED_KEY) === '1'; } catch { return false; }
+  });
+  const [drawer, setDrawer] = useState(false);
 
   useEffect(() => {
     if (!ready) return;
-    if (!session) window.location.replace('/login');
+    if (!session) window.location.replace('/');
     else if (session.user.role === 'guardian' || session.user.role === 'super_admin') window.location.replace(homeFor(session.user.role));
   }, [ready, session]);
+
+  useEffect(() => {
+    if (!ready || !session) return;
+    void call<{ school_name: string | null }>('/me').then((m) => setSchool(m.school_name)).catch(() => {});
+  }, [ready, session, call]);
+
+  // A gaveta fecha com Esc.
+  useEffect(() => {
+    if (!drawer) return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setDrawer(false);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [drawer]);
 
   if (!session || session.user.role === 'guardian' || session.user.role === 'super_admin') return null;
   const { user } = session;
   const groups = GROUPS(user.role === 'admin');
-  const all = groups.flatMap((g) => g.items);
+  const main = groups.slice(0, -1);
+  const footer = groups[groups.length - 1];
+  const schoolName = school ?? 'Prezenti';
 
-  const link = (t: Item, compact = false) => {
+  const toggle = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    try { localStorage.setItem(COLLAPSED_KEY, next ? '1' : '0'); } catch {}
+  };
+
+  // `mini`: só ícones, com o nome numa etiqueta ao passar o rato ou focar.
+  const link = (t: Item, mini: boolean) => {
     const on = path === t.href;
     return (
       <Link
         key={t.href}
         href={t.href}
+        onClick={() => setDrawer(false)}
         aria-current={on ? 'page' : undefined}
-        className={`flex shrink-0 items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${on ? 'bg-brand-soft text-brand' : 'text-muted hover:bg-surface-2 hover:text-ink'} ${compact ? 'whitespace-nowrap' : ''}`}
+        aria-label={mini ? t.label : undefined}
+        className={`group relative flex h-9 items-center gap-3 rounded-lg text-[13px] font-medium transition-colors ${mini ? 'justify-center' : 'px-3'} ${on
+          ? 'bg-nav-active font-semibold text-white [&_svg]:text-accent'
+          : 'text-nav-ink hover:bg-white/[0.06] hover:text-white'}`}
       >
-        <Icon d={t.icon} />{t.label}
+        <Icon d={t.icon} />
+        {mini
+          ? <span className="pointer-events-none absolute left-full z-50 ml-3 whitespace-nowrap rounded-md bg-ink px-2 py-1 text-footnote font-medium text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">{t.label}</span>
+          : <span className="truncate">{t.label}</span>}
       </Link>
     );
   };
 
-  return (
-    <div className="min-h-screen lg:grid lg:grid-cols-[var(--sidebar-w)_1fr]">
-      <aside className="sticky top-0 hidden h-screen flex-col justify-between overflow-y-auto border-r border-line bg-surface p-4 lg:flex">
-        <div className="flex flex-col gap-6">
-          <div className="px-2 pt-1"><Wordmark /></div>
-          {groups.map((g) => (
-            <div key={g.title}>
-              <p className="mb-1.5 px-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">{g.title}</p>
-              <nav aria-label={g.title} className="flex flex-col gap-0.5">{g.items.map((t) => link(t))}</nav>
+  const group = (g: { title: string; items: Item[] }, mini: boolean) => (
+    <div key={g.title}>
+      {mini
+        ? <div className="mx-3 mb-2 h-px bg-white/10" aria-hidden />
+        : <p className="mb-1.5 px-3 text-caption font-medium text-nav-ink/60">{g.title}</p>}
+      <nav aria-label={g.title} className="flex flex-col gap-0.5">{g.items.map((t) => link(t, mini))}</nav>
+    </div>
+  );
+
+  // O mesmo menu serve o computador (fixo, recolhível) e o telemóvel (gaveta, sempre completo).
+  const menu = (mini: boolean, onClose?: () => void) => (
+    <div className={`flex h-full flex-col bg-nav px-3 pb-3 pt-3 text-nav-ink ${mini ? '' : 'overflow-hidden'}`}>
+      <div className={`flex items-center gap-2 ${mini ? 'flex-col' : ''}`}>
+        <div className={`flex min-w-0 flex-1 items-center gap-2.5 rounded-xl ${mini ? 'justify-center p-1' : 'border border-white/[0.08] bg-white/[0.05] p-2'}`} title={schoolName}>
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent font-display text-[12px] font-bold text-nav" aria-hidden>{school ? initials(school) : <RingMark size={18} />}</span>
+          {!mini && (
+            <div className="min-w-0 leading-tight">
+              <p className="truncate text-[13px] font-semibold text-white">{schoolName}</p>
+              <p className="flex items-center gap-1 text-caption text-nav-ink/80"><span className="text-accent"><RingMark size={11} /></span>Prezenti</p>
             </div>
-          ))}
+          )}
         </div>
-        <div className="mt-6">
-          <p className="mb-3 px-3 font-display text-[15px] leading-snug text-ink">Saiba que <span className="text-brand">chegaram bem.</span></p>
-        <div className="flex items-center gap-3 rounded-xl border border-line p-3">
-          <Avatar name={user.name} size={36} />
+        {onClose ? (
+          <button onClick={onClose} aria-label="Fechar menu" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-nav-ink hover:bg-white/[0.08] hover:text-white"><Glyph d={CLOSE} /></button>
+        ) : (
+          <button onClick={toggle} aria-label={mini ? 'Expandir menu' : 'Recolher menu'} aria-expanded={!mini} title={mini ? 'Expandir menu' : 'Recolher menu'} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-nav-ink hover:bg-white/[0.08] hover:text-white"><Glyph d={SIDEBAR} /></button>
+        )}
+      </div>
+
+      <div className={`mt-5 flex flex-1 flex-col gap-5 ${mini ? '' : 'overflow-y-auto [scrollbar-width:none]'}`}>
+        {main.map((g) => group(g, mini))}
+        <div className="mt-auto">{group(footer, mini)}</div>
+      </div>
+
+      <div className={`mt-3 flex items-center gap-2.5 border-t border-white/10 pt-3 ${mini ? 'flex-col' : 'px-1'}`}>
+        <span title={mini ? `${user.name}, ${ROLE[user.role]}` : undefined} className="rounded-full ring-2 ring-white/10"><Avatar name={user.name} size={30} /></span>
+        {!mini && (
           <div className="min-w-0 flex-1 leading-tight">
-            <p className="truncate text-sm font-medium">{user.name}</p>
-            <p className="text-xs text-muted">{ROLE[user.role]}</p>
+            <p className="truncate text-[13px] font-medium text-white">{user.name}</p>
+            <p className="text-caption text-nav-ink">{ROLE[user.role]}</p>
           </div>
-          <button onClick={logout} className="btn btn-quiet px-2 py-1 text-xs">Sair</button>
-        </div>
-        </div>
+        )}
+        <button onClick={logout} aria-label="Sair" title="Sair" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-nav-ink hover:bg-white/[0.08] hover:text-white"><Glyph d={LOGOUT} size={17} /></button>
+      </div>
+    </div>
+  );
+
+  const current = groups.flatMap((g) => g.items).find((t) => t.href === path);
+
+  return (
+    <div className="min-h-screen lg:flex">
+      <aside
+        className="sticky top-0 z-30 hidden h-screen shrink-0 transition-[width] duration-200 ease-[var(--ease)] lg:block"
+        style={{ width: collapsed ? 'var(--sidebar-w-mini)' : 'var(--sidebar-w)' }}
+      >
+        {menu(collapsed)}
       </aside>
 
-      <div className="relative min-w-0 overflow-x-clip">
-        {/* Ondas da marca, quase invisíveis, atrás de todo o conteúdo. */}
-        <div aria-hidden className="pointer-events-none absolute -right-40 -top-40 hidden text-brand/[0.09] lg:block"><Rings size={640} count={4} /></div>
-        <header className="sticky top-0 z-10 border-b border-line bg-bg/90 backdrop-blur lg:hidden">
-          <div className="flex h-14 items-center justify-between px-4">
-            <Wordmark />
-            <button onClick={logout} className="btn btn-ghost px-3 py-1.5 text-sm">Sair</button>
-          </div>
-          <nav aria-label="Principal" className="flex gap-1 overflow-x-auto px-3 pb-2 [scrollbar-width:none]">{all.map((t) => link(t, true))}</nav>
-        </header>
-        <main className="relative mx-auto w-full max-w-[var(--content-max)] px-4 py-8 sm:px-8 lg:py-10">{children}</main>
+      {/* Telemóvel: barra de cima com o botão do menu; o menu abre como gaveta por cima do conteúdo. */}
+      <header className="sticky top-0 z-20 flex h-12 items-center gap-2 border-b border-line bg-bg/90 px-2 backdrop-blur lg:hidden">
+        <button onClick={() => setDrawer(true)} aria-label="Abrir menu" aria-expanded={drawer} className="flex h-9 w-9 items-center justify-center rounded-lg text-ink hover:bg-surface-2"><Glyph d={MENU} size={20} /></button>
+        <span className="text-brand"><RingMark size={22} /></span>
+        <span className="truncate text-[15px] font-semibold">{current?.label ?? 'Prezenti'}</span>
+      </header>
+      <div className={`fixed inset-0 z-40 lg:hidden ${drawer ? '' : 'pointer-events-none'}`} inert={!drawer}>
+        <div onClick={() => setDrawer(false)} className={`absolute inset-0 bg-[rgb(15_30_61/0.45)] transition-opacity duration-200 ${drawer ? 'opacity-100' : 'opacity-0'}`} />
+        <div role="dialog" aria-modal="true" aria-label="Menu" className={`absolute inset-y-0 left-0 w-[280px] max-w-[85vw] transition-transform duration-200 ease-[var(--ease)] ${drawer ? 'translate-x-0 shadow-2xl' : '-translate-x-full'}`}>
+          {menu(false, () => setDrawer(false))}
+        </div>
+      </div>
+
+      <div className="min-w-0 flex-1 lg:py-2 lg:pl-2 lg:pr-2">
+        {/* A folha: uma superfície branca por página, a largura toda, até ao fundo do ecrã. */}
+        <main className="relative w-full overflow-x-clip text-body lg:min-h-[calc(100vh-1rem)] lg:rounded-[14px] lg:border lg:border-line lg:bg-surface">
+          <div className="px-4 py-5 sm:px-6 lg:px-8 lg:py-7">{children}</div>
+        </main>
       </div>
     </div>
   );

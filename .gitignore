@@ -8,3 +8,10 @@ dist
 .DS_Store
 *.tsbuildinfo
 *.log
+
+# Cloudflare / Wrangler
+.dev.vars
+.wrangler/
+apps/api/.seed.sql
+# credenciais geradas para produção (nunca no git)
+credenciais.local.md

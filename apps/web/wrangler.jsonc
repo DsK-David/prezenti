@@ -1,0 +1,12 @@
+// Cloudflare Pages "prezenti": o site estático (out/, de `npm run build:pages`) e a API como
+// Pages Function em /api (functions/api/[[route]].ts), com a base D1 "prezenti".
+// Segredos: npx wrangler pages secret put JWT_SECRET --project-name prezenti (e VAPID_PRIVATE_KEY).
+{
+  "name": "prezenti",
+  "pages_build_output_dir": "out",
+  "compatibility_date": "2026-10-01",
+  "d1_databases": [
+    { "binding": "DB", "database_name": "prezenti", "database_id": "f1bd6ec1-5f2a-48f8-8a62-3b04b6b8761d", "migrations_dir": "../api/migrations" }
+  ],
+  "vars": { "VAPID_SUBJECT": "mailto:admin@prezenti.app" }
+}

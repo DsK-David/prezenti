@@ -1,0 +1,11 @@
+// API do Prezenti em desenvolvimento (`npm run dev`). Em produção a mesma app corre como
+// Pages Function do projeto "prezenti" (ver apps/web/functions e apps/web/wrangler.jsonc).
+{
+  "name": "prezenti-api",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "d1_databases": [
+    { "binding": "DB", "database_name": "prezenti", "database_id": "f1bd6ec1-5f2a-48f8-8a62-3b04b6b8761d", "migrations_dir": "migrations" }
+  ],
+  "vars": { "VAPID_SUBJECT": "mailto:admin@prezenti.app" }
+}

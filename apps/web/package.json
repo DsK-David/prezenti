@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "build:pages": "NEXT_OUTPUT=export next build",
+    "deploy": "npm run build:pages && wrangler pages deploy out --project-name prezenti --branch main",
+    "preview:pages": "npm run build:pages && wrangler pages dev out --port 8788 --persist-to ../api/.wrangler/state"
   },
   "dependencies": {
     "next": "16.4.3",
@@ -14,6 +17,7 @@
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261029.1",
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
@@ -21,6 +25,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.4.3",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wrangler": "^4.155.0"
   }
 }

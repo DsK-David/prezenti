@@ -32,7 +32,7 @@ export default function Pais() {
 
   useEffect(() => {
     if (!ready) return;
-    if (!session) window.location.replace('/login');
+    if (!session) window.location.replace('/');
     else if (session.user.role !== 'guardian') window.location.replace(homeFor(session.user.role));
   }, [ready, session]);
 

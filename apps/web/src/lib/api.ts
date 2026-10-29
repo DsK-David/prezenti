@@ -1,4 +1,5 @@
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+// Por defeito a API passa pelo próprio Next (/api → API_INTERNAL_URL, ver next.config.ts).
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '/api';
 
 export async function api<T>(path: string, init: RequestInit & { token?: string } = {}): Promise<T> {
   const { token, headers, ...rest } = init;

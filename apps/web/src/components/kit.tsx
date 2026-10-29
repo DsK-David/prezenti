@@ -1,13 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Spinner } from './ui';
 
 export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: React.ReactNode }) {
   return (
     <div className="anim-rise mb-6 flex flex-wrap items-end justify-between gap-3">
       <div>
-        <h1 className="font-display text-3xl text-ink sm:text-4xl">{title}</h1>
+        <h1 className="font-display text-title1 text-ink">{title}</h1>
         {subtitle && <p className="mt-1 text-muted">{subtitle}</p>}
       </div>
       {action}
@@ -47,7 +46,7 @@ export function Modal({ title, subtitle, onClose, children }: { title: string; s
     <div className="anim-fade fixed inset-0 z-30 flex items-end justify-center bg-[rgb(22_32_58/0.22)] p-4 backdrop-blur-sm sm:items-center" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div role="dialog" aria-modal="true" aria-label={title} className="card anim-pop flex max-h-[90vh] w-full max-w-md flex-col gap-4 overflow-auto p-6">
         <div>
-          <h2 className="font-display text-xl">{title}</h2>
+          <h2 className="font-display text-title2">{title}</h2>
           {subtitle && <p className="text-sm text-muted">{subtitle}</p>}
         </div>
         {children}
@@ -56,20 +55,10 @@ export function Modal({ title, subtitle, onClose, children }: { title: string; s
   );
 }
 
-export function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
-  return (
-    <label className="flex flex-col gap-1.5 text-sm font-medium text-ink">
-      {label}
-      {children}
-      {hint && <span className="text-xs font-normal text-muted">{hint}</span>}
-    </label>
-  );
-}
-
 export function Empty({ title, hint, action }: { title: string; hint?: string; action?: React.ReactNode }) {
   return (
     <div className="flex flex-col items-center gap-2 p-10 text-center">
-      <p className="font-display text-lg">{title}</p>
+      <p className="font-display text-title3">{title}</p>
       {hint && <p className="max-w-sm text-sm text-muted">{hint}</p>}
       {action}
     </div>
@@ -97,22 +86,68 @@ export function Secret({ label, value, note }: { label: string; value: string; n
   };
   return (
     <div className="rounded-xl border border-brand/25 bg-brand-soft p-4">
-      <p className="text-xs font-semibold uppercase tracking-widest text-brand">{label}</p>
+      <p className="text-[13px] font-medium text-ink">{label}</p>
       <div className="mt-2 flex items-center gap-2">
         <code className="min-w-0 flex-1 break-all rounded-lg bg-surface px-3 py-2 font-mono text-sm">{value}</code>
-        <button type="button" onClick={copy} className="btn btn-primary shrink-0 px-3 py-2 text-sm">{copied ? 'Copiado' : 'Copiar'}</button>
+        <button type="button" onClick={copy} className="btn btn-primary shrink-0">{copied ? 'Copiado' : 'Copiar'}</button>
       </div>
-      <p className="mt-2 text-xs text-muted">{note}</p>
+      <p className="mt-2 text-footnote text-muted">{note}</p>
     </div>
   );
 }
 
-/** Botão de submissão com estado de espera; o único primário do formulário. */
-export function Submit({ busy, children, busyText }: { busy: boolean; children: React.ReactNode; busyText: string }) {
-  return <button disabled={busy} className="btn btn-primary">{busy ? <><Spinner /> {busyText}</> : children}</button>;
+/** Páginas 1 … 4 5 6 … 12: sempre a primeira, a última e as vizinhas da atual. */
+export function Pagination({ page, pages, onPage }: { page: number; pages: number; onPage: (p: number) => void }) {
+  if (pages <= 1) return null;
+  const nums: Array<number | 'gap'> = [];
+  for (let p = 1; p <= pages; p++) {
+    if (p === 1 || p === pages || Math.abs(p - page) <= 1) nums.push(p);
+    else if (nums[nums.length - 1] !== 'gap') nums.push('gap');
+  }
+  const arrow = (dir: -1 | 1) => (
+    <button
+      onClick={() => onPage(page + dir)}
+      disabled={dir === -1 ? page === 1 : page === pages}
+      aria-label={dir === -1 ? 'Página anterior' : 'Página seguinte'}
+      className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-ink hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={dir === -1 ? 'm15 6-6 6 6 6' : 'm9 6 6 6-6 6'} /></svg>
+    </button>
+  );
+  return (
+    <nav aria-label="Paginação" className="flex items-center gap-0.5">
+      {arrow(-1)}
+      {nums.map((n, i) => n === 'gap'
+        ? <span key={`g${i}`} className="w-6 text-center text-muted" aria-hidden>…</span>
+        : (
+          <button
+            key={n}
+            onClick={() => onPage(n)}
+            aria-current={n === page ? 'page' : undefined}
+            className={`h-9 min-w-9 rounded-lg px-2 text-sm font-medium tabular-nums ${n === page ? 'bg-ink text-white' : 'text-ink hover:bg-surface-2'}`}
+          >
+            {n}
+          </button>
+        ))}
+      {arrow(1)}
+    </nav>
+  );
+}
+
+/** Utilizador e senha temporária de uma conta nova, para entregar a quem a vai usar. */
+export function Credentials({ username, password, note }: { username: string; password: string; note: string }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <Secret label="Nome de utilizador" value={username} note="É com este nome que a pessoa entra no Prezenti." />
+      <Secret label="Senha temporária" value={password} note={note} />
+    </div>
+  );
 }
 
 export const ERRORS: Record<string, string> = {
+  username_in_use: 'Esse nome de utilizador já existe. Escolha outro.',
+  guardian_name_required: 'Escreva o nome do encarregado.',
+  slug_in_use: 'Já existe uma escola com esse identificador.',
   email_in_use: 'Já existe uma conta com esse email.',
   class_exists: 'Já existe uma turma com esse nome.',
   invalid_teacher: 'Escolha um professor desta escola.',
@@ -120,6 +155,6 @@ export const ERRORS: Record<string, string> = {
   invalid_class: 'Escolha uma turma desta escola.',
   card_in_use: 'Esse cartão já está associado a outro aluno.',
   wrong_password: 'A senha atual está incorreta.',
-  validation: 'Confira os campos do formulário.',
+  validation: 'Confira os campos do formulário. O nome de utilizador só aceita letras minúsculas, números, ponto e hífen.',
 };
 export const errText = (e: unknown, fallback = 'Não foi possível concluir. Tente de novo.') => ERRORS[(e as Error).message] ?? fallback;

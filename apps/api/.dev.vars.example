@@ -1,0 +1,6 @@
+# Segredos da API em desenvolvimento (wrangler dev lê este ficheiro). Em produção:
+#   npx wrangler pages secret put JWT_SECRET --project-name prezenti   (e o mesmo para VAPID_*)
+JWT_SECRET=troque-isto-por-um-segredo-longo
+# gerar com: npx web-push generate-vapid-keys
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=

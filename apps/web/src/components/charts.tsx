@@ -64,7 +64,7 @@ export function ChartCard({ title, subtitle, icon, legend, table, children, clas
         <div className="flex items-center gap-3">
           {icon && <IconChip>{icon}</IconChip>}
           <div>
-            <h2 className="font-display text-lg leading-tight">{title}</h2>
+            <h2 className="font-display text-title3">{title}</h2>
             {subtitle && <p className="text-sm text-muted">{subtitle}</p>}
           </div>
         </div>
@@ -95,7 +95,7 @@ function Tip({ x, w, y, lines }: { x: number; w: number; y: number; lines: strin
   const left = Math.min(Math.max(x, 84), Math.max(w - 84, 84));
   return (
     <div className="pointer-events-none absolute z-10 w-max max-w-[200px] -translate-x-1/2 -translate-y-full rounded-lg border border-line bg-surface px-3 py-2 text-xs shadow-[0_8px_24px_-8px_rgb(22_32_58/0.25)]" style={{ left, top: y - 10 }} role="tooltip">
-      <p className="font-display text-base leading-tight text-ink">{lines[0]}</p>
+      <p className="font-display text-title3 text-ink">{lines[0]}</p>
       {lines.slice(1).map((l, i) => <p key={i} className="text-muted">{l}</p>)}
     </div>
   );

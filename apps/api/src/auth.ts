@@ -1,38 +1,42 @@
-import crypto from 'node:crypto';
-import type { FastifyReply, FastifyRequest } from 'fastify';
-import { db } from './db.js';
+import { createMiddleware } from 'hono/factory';
+import { sign, verify } from 'hono/jwt';
+import { first, run, sqlTime } from './db.js';
+import { sha256Hex } from './lib/password.js';
+import type { AppEnv, Device, JwtUser, Role } from './env.js';
 
-export type Role = 'super_admin' | 'admin' | 'teacher' | 'guardian';
-export interface JwtUser { sub: number; role: Role; school_id: number | null }
+const WEEK = 7 * 24 * 3600;
 
-declare module '@fastify/jwt' {
-  interface FastifyJWT {
-    payload: JwtUser;
-    user: JwtUser;
-  }
-}
+export const signToken = (u: JwtUser, secret: string) =>
+  sign({ sub: u.sub, role: u.role, school_id: u.school_id, exp: Math.floor(Date.now() / 1000) + WEEK }, secret, 'HS256');
 
-export const sha256 = (v: string) => crypto.createHash('sha256').update(v).digest('hex');
-
-export const requireRole =
-  (...roles: Role[]) =>
-  async (req: FastifyRequest, reply: FastifyReply) => {
-    try {
-      await req.jwtVerify();
-    } catch {
-      return reply.code(401).send({ error: 'unauthorized' });
-    }
-    if (!roles.includes(req.user.role)) return reply.code(403).send({ error: 'forbidden' });
-  };
+/**
+ * Exige sessão com um dos perfis. A cada pedido confirma que a conta continua ativa e que a escola
+ * não foi suspensa: desativar alguém no painel corta-lhe o acesso logo, sem esperar que o token expire.
+ */
+export const requireRole = (...roles: Role[]) =>
+  createMiddleware<AppEnv>(async (c, next) => {
+    const header = c.req.header('authorization');
+    if (!header?.startsWith('Bearer ')) return c.json({ error: 'unauthorized' }, 401);
+    let payload: JwtUser;
+    try { payload = (await verify(header.slice(7), c.env.JWT_SECRET, 'HS256')) as unknown as JwtUser; }
+    catch { return c.json({ error: 'unauthorized' }, 401); }
+    const live = await first<{ active: number; school_active: number | null }>(c.env.DB,
+      'SELECT u.active, s.active AS school_active FROM users u LEFT JOIN schools s ON s.id = u.school_id WHERE u.id = ?', payload.sub);
+    if (!live?.active || (payload.role !== 'super_admin' && !live.school_active)) return c.json({ error: 'unauthorized' }, 401);
+    if (!roles.includes(payload.role)) return c.json({ error: 'forbidden' }, 403);
+    c.set('user', { sub: Number(payload.sub), role: payload.role, school_id: payload.school_id == null ? null : Number(payload.school_id) });
+    await next();
+  });
 
 /** Autentica o kiosk pelo token do dispositivo (nunca por conta de utilizador). */
-export async function deviceAuth(req: FastifyRequest, reply: FastifyReply) {
-  const token = req.headers['x-device-token'];
-  if (typeof token !== 'string') return reply.code(401).send({ error: 'missing_token' });
-  const device = await db('devices')
-    .where({ token_hash: sha256(token), active: true })
-    .first('id', 'school_id', 'location');
-  if (!device) return reply.code(401).send({ error: 'invalid_token' });
-  await db('devices').where({ id: device.id }).update({ last_seen_at: db.fn.now() });
-  (req as any).device = device;
-}
+export const deviceAuth = createMiddleware<AppEnv>(async (c, next) => {
+  const token = c.req.header('x-device-token');
+  if (!token) return c.json({ error: 'missing_token' }, 401);
+  const device = await first<Device>(c.env.DB,
+    `SELECT d.id, d.school_id, d.location FROM devices d JOIN schools s ON s.id = d.school_id
+     WHERE d.token_hash = ? AND d.active = 1 AND s.active = 1`, await sha256Hex(token));
+  if (!device) return c.json({ error: 'invalid_token' }, 401);
+  await run(c.env.DB, 'UPDATE devices SET last_seen_at = ? WHERE id = ?', sqlTime(new Date()), device.id);
+  c.set('device', device);
+  await next();
+});

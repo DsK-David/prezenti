@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { homeFor, logout, useSession } from '@/lib/auth';
 import { Wordmark } from '@/components/ui';
-import { Empty, Field, Modal, PageHeader, Secret, SkeletonRows, Submit, useToast, errText } from '@/components/kit';
+import { Credentials, Empty, PageHeader, SkeletonRows, useToast, errText } from '@/components/kit';
+import { DoneDialog, Field, FormDialog, FormSection, UsernameField } from '@/components/form';
 
 interface School { id: number; name: string; slug: string; active: number; students: number; devices: number }
 
@@ -14,12 +15,14 @@ export default function Plataforma() {
   const [schools, setSchools] = useState<School[] | null>(null);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
-  const [secret, setSecret] = useState<{ school: string; email: string; password: string } | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [secret, setSecret] = useState<{ school: string; username: string; password: string } | null>(null);
   const { show, node } = useToast();
 
   useEffect(() => {
     if (!ready) return;
-    if (!session) window.location.replace('/login');
+    if (!session) window.location.replace('/');
     else if (session.user.role !== 'super_admin') window.location.replace(homeFor(session.user.role));
   }, [ready, session]);
 
@@ -29,12 +32,12 @@ export default function Plataforma() {
   if (!session || session.user.role !== 'super_admin') return null;
 
   async function create(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault(); const form = e.currentTarget; const f = new FormData(form); setBusy(true);
+    const f = new FormData(e.currentTarget); setBusy(true); setFormError(null);
     try {
-      const r = await call<{ admin_temporary_password: string }>('/schools', { method: 'POST', body: JSON.stringify({ name: f.get('name'), slug: f.get('slug'), admin_name: f.get('admin_name'), admin_email: f.get('admin_email') }) });
-      setSecret({ school: String(f.get('name')), email: String(f.get('admin_email')), password: r.admin_temporary_password });
-      form.reset(); setName(''); await load();
-    } catch (err) { show((err as Error).message === 'validation' ? 'Confira o nome, o identificador e o email.' : errText(err, 'Não foi possível criar a escola. O identificador ou o email já existem?'), 'bad'); }
+      const r = await call<{ admin_username: string; admin_temporary_password: string }>('/schools', { method: 'POST', body: JSON.stringify({ name: f.get('name'), slug: f.get('slug'), admin_name: f.get('admin_name'), admin_username: f.get('admin_username') || undefined, admin_email: f.get('admin_email') || undefined }) });
+      setAdding(false); setSecret({ school: String(f.get('name')), username: r.admin_username, password: r.admin_temporary_password });
+      setName(''); await load();
+    } catch (err) { setFormError((err as Error).message === 'validation' ? 'Confira o nome, o identificador e o nome de utilizador.' : errText(err, 'Não foi possível criar a escola. O identificador ou o nome de utilizador já existem?')); }
     setBusy(false);
   }
 
@@ -52,21 +55,18 @@ export default function Plataforma() {
         </div>
       </header>
       <main className="mx-auto max-w-[var(--content-max)] px-4 py-10 sm:px-8">
-        <PageHeader title="Escolas" subtitle={schools ? `${schools.length} escolas · ${schools.reduce((n, s) => n + s.students, 0)} alunos` : 'A carregar'} />
+        <PageHeader
+          title="Escolas"
+          subtitle={schools ? `${schools.length} escolas · ${schools.reduce((n, s) => n + s.students, 0)} alunos` : 'A carregar'}
+          action={<button onClick={() => { setFormError(null); setName(''); setAdding(true); }} className="btn btn-primary">Nova escola</button>}
+        />
 
-        <form onSubmit={create} className="card anim-rise mb-6 grid gap-3 p-5 sm:grid-cols-2 lg:grid-cols-[1.3fr_1fr_1fr_1.2fr_auto] lg:items-end">
-          <Field label="Nome da escola"><input name="name" required value={name} onChange={(e) => setName(e.target.value)} className="input" /></Field>
-          <Field label="Identificador"><input name="slug" required pattern="[a-z0-9\-]+" value={slugify(name)} onChange={() => {}} readOnly className="input font-mono" /></Field>
-          <Field label="Nome do gestor"><input name="admin_name" required className="input" /></Field>
-          <Field label="Email do gestor"><input name="admin_email" type="email" required className="input" /></Field>
-          <Submit busy={busy} busyText="A criar">Criar escola</Submit>
-        </form>
 
         <div className="card overflow-hidden">
-          {schools === null ? <SkeletonRows n={3} /> : schools.length === 0 ? <Empty title="Ainda não há escolas" hint="Crie a primeira no formulário acima." /> : (
+          {schools === null ? <SkeletonRows n={3} /> : schools.length === 0 ? <Empty title="Ainda não há escolas" hint="Crie a primeira escola e entregue a senha temporária ao gestor." /> : (
             <ul>{schools.map((s, i) => (
               <li key={s.id} className="anim-rise flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-line px-5 py-4 last:border-0" style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}>
-                <div className="min-w-0 flex-1 basis-48"><p className={`font-display text-lg ${s.active ? '' : 'text-muted line-through'}`}>{s.name}</p><p className="font-mono text-xs text-muted">{s.slug}</p></div>
+                <div className="min-w-0 flex-1 basis-48"><p className={`font-display text-title3 ${s.active ? '' : 'text-muted line-through'}`}>{s.name}</p><p className="font-mono text-xs text-muted">{s.slug}</p></div>
                 <dl className="flex gap-6 text-sm">
                   <div><dt className="text-xs text-muted">Alunos</dt><dd className="font-semibold tabular-nums">{s.students}</dd></div>
                   <div><dt className="text-xs text-muted">Dispositivos</dt><dd className="font-semibold tabular-nums">{s.devices}</dd></div>
@@ -78,12 +78,31 @@ export default function Plataforma() {
         </div>
       </main>
 
+      {adding && (
+        <FormDialog
+          title="Nova escola" subtitle="Cria a escola e a conta do gestor, com uma senha temporária mostrada no fim."
+          onClose={() => setAdding(false)} onSubmit={create} busy={busy} error={formError}
+          submitLabel="Criar escola" busyLabel="A criar"
+        >
+          <FormSection title="Escola">
+            <Field label="Nome da escola"><input name="name" required autoFocus maxLength={120} value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" className="input" /></Field>
+            <Field label="Identificador" hint="Gerado a partir do nome; usado nos endereços."><input name="slug" required pattern="[a-z0-9\-]+" value={slugify(name)} readOnly tabIndex={-1} className="input bg-surface-2 font-mono text-muted" /></Field>
+          </FormSection>
+          <FormSection title="Gestor" description="Quem vai configurar a escola: turmas, alunos e dispositivos.">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Nome completo"><input name="admin_name" required maxLength={120} autoComplete="off" className="input" /></Field>
+              <Field label="Email" optional hint="Só para contacto."><input name="admin_email" type="email" autoComplete="off" className="input" /></Field>
+            </div>
+            <div>
+              <UsernameField name="admin_username" />
+            </div>
+          </FormSection>
+        </FormDialog>
+      )}
       {secret && (
-        <Modal title="Escola criada" subtitle={secret.school} onClose={() => setSecret(null)}>
-          <p className="text-sm text-muted">Conta do gestor: <span className="font-medium text-ink">{secret.email}</span></p>
-          <Secret label="Senha temporária" value={secret.password} note="Mostrada só agora. O gestor deve trocá-la no primeiro acesso, em Definições." />
-          <button onClick={() => setSecret(null)} className="btn btn-primary">Feito</button>
-        </Modal>
+        <DoneDialog title="Escola criada" subtitle={secret.school} onClose={() => setSecret(null)}>
+          <Credentials username={secret.username} password={secret.password} note="Mostrada só agora. O gestor deve trocá-la no primeiro acesso, em Definições." />
+        </DoneDialog>
       )}
       {node}
     </div>

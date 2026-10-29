@@ -1,0 +1,18 @@
+# Cloudflare Pages: a app não tem rotas por idioma; /pt, /en… levam à mesma página sem o prefixo.
+/pt /
+/pt/* /:splat
+/pt-PT /
+/pt-PT/* /:splat
+/pt-BR /
+/pt-BR/* /:splat
+/pt-CV /
+/pt-CV/* /:splat
+/en /
+/en/* /:splat
+/en-US /
+/en-US/* /:splat
+/es /
+/es/* /:splat
+/fr /
+/fr/* /:splat
+/login /

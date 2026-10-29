@@ -15,15 +15,15 @@ export function loadSession(): Session | null {
   try { return JSON.parse(localStorage.getItem(KEY) ?? 'null'); } catch { return null; }
 }
 
-export async function login(email: string, password: string) {
-  const s = await api<Session>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+export async function login(username: string, password: string) {
+  const s = await api<Session>('/auth/login', { method: 'POST', body: JSON.stringify({ username: username.trim().toLowerCase(), password }) });
   localStorage.setItem(KEY, JSON.stringify(s));
   return s;
 }
 
 export function logout() {
   localStorage.removeItem(KEY);
-  window.location.href = '/login';
+  window.location.href = '/';
 }
 
 /** Lê a sessão no cliente; `ready` evita piscar o ecrã de login antes de ler o localStorage. */

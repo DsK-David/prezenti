@@ -1,12 +1,13 @@
-import 'dotenv/config';
+export type Role = 'super_admin' | 'admin' | 'teacher' | 'guardian';
+export interface JwtUser { sub: number; role: Role; school_id: number | null }
+export interface Device { id: number; school_id: number; location: 'gate' | 'canteen' }
 
-export const env = {
-  port: Number(process.env.PORT ?? 4000),
-  jwtSecret: process.env.JWT_SECRET ?? 'dev-secret-change-me',
-  corsOrigin: (process.env.CORS_ORIGIN ?? 'http://localhost:3000').split(','),
-  vapid: {
-    publicKey: process.env.VAPID_PUBLIC_KEY ?? '',
-    privateKey: process.env.VAPID_PRIVATE_KEY ?? '',
-    subject: process.env.VAPID_SUBJECT ?? 'mailto:admin@prezenti.app',
-  },
-};
+export interface Bindings {
+  DB: D1Database;
+  JWT_SECRET: string;
+  VAPID_PUBLIC_KEY?: string;
+  VAPID_PRIVATE_KEY?: string;
+  VAPID_SUBJECT?: string;
+}
+
+export type AppEnv = { Bindings: Bindings; Variables: { user: JwtUser; device: Device } };

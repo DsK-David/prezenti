@@ -13,7 +13,7 @@ export function RingMark({ size = 28 }: { size?: number }) {
 
 export function Wordmark() {
   return (
-    <span className="inline-flex items-center gap-2 font-display text-xl text-ink">
+    <span className="inline-flex items-center gap-2 font-display text-title2 text-ink">
       <span className="text-brand"><RingMark /></span>
       Prezenti
     </span>

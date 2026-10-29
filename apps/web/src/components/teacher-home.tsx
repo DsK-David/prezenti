@@ -68,7 +68,7 @@ export function TeacherHome() {
       <div className="anim-rise flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-sm text-muted">{dateRaw.charAt(0).toUpperCase() + dateRaw.slice(1)}</p>
-          <h1 className="font-display text-3xl sm:text-4xl">{greeting}, {session?.user.name.split(' ')[0]}</h1>
+          <h1 className="font-display text-title1">{greeting}, {session?.user.name.split(' ')[0]}</h1>
         </div>
         <LivePulse off={offline} label={offline ? 'Sem ligação, a tentar de novo' : 'Ao vivo'} />
       </div>
@@ -88,7 +88,7 @@ export function TeacherHome() {
                 return (
                   <button key={c.id} role="tab" aria-selected={on} onClick={() => { setActive(c.id); setFilter('all'); }}
                     className={`rounded-xl border px-4 py-2 text-left transition-colors ${on ? 'border-brand/40 bg-brand-soft' : 'border-line bg-surface hover:bg-surface-2'}`}>
-                    <span className={`block font-display text-lg leading-tight ${on ? 'text-brand' : ''}`}>{c.name}</span>
+                    <span className={`block font-display text-title3 ${on ? 'text-brand' : ''}`}>{c.name}</span>
                     <span className="text-xs tabular-nums text-muted">{arrived} de {a?.students.length ?? c.students} chegaram</span>
                   </button>
                 );
@@ -103,10 +103,10 @@ export function TeacherHome() {
                 <div aria-hidden className="pointer-events-none absolute -right-10 -top-10 text-white/[0.16]"><RingMark size={190} /></div>
                 <p className="relative text-sm font-medium text-white/80">{cur.class.name}</p>
                 <p className="relative mt-1 flex items-baseline gap-3">
-                  <span className="font-display text-[clamp(3.5rem,8vw,5.5rem)] leading-none">{here}</span>
-                  <span className="text-lg text-white/80">de {counts.all} {counts.all === 1 ? 'aluno' : 'alunos'} na escola</span>
+                  <span className="font-display text-display tabular-nums">{here}</span>
+                  <span className="text-body text-white/80">de {counts.all} {counts.all === 1 ? 'aluno' : 'alunos'} na escola</span>
                 </p>
-                <p className="relative mt-3 font-display text-xl text-accent">
+                <p className="relative mt-2 font-display text-title3 text-accent">
                   {counts.all === 0 ? 'Esta turma ainda não tem alunos.' : counts.absent === 0 ? 'Todos chegaram bem.' : `Ainda não chegaram: ${counts.absent}.`}
                 </p>
               </div>

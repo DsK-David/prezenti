@@ -4,31 +4,23 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "build": "tsc -p tsconfig.json",
-    "start": "node dist/src/server.js",
+    "dev": "wrangler dev --port 4000",
     "typecheck": "tsc --noEmit",
-    "migrate": "node --import tsx node_modules/knex/bin/cli.js --knexfile knexfile.ts migrate:latest",
-    "rollback": "node --import tsx node_modules/knex/bin/cli.js --knexfile knexfile.ts migrate:rollback",
-    "seed": "node --import tsx node_modules/knex/bin/cli.js --knexfile knexfile.ts seed:run"
+    "db:migrate": "wrangler d1 migrations apply prezenti --local",
+    "db:seed": "tsx scripts/seed.ts --out .seed.sql && wrangler d1 execute prezenti --local --file .seed.sql",
+    "db:migrate:remote": "wrangler d1 migrations apply prezenti --remote",
+    "db:seed:remote": "tsx scripts/seed.ts --out .seed.sql --random ../../credenciais.local.md && wrangler d1 execute prezenti --remote --file .seed.sql"
   },
   "dependencies": {
-    "@fastify/cors": "^11.3.1",
-    "@fastify/jwt": "^10.2.5",
-    "@fastify/rate-limit": "^11.2.1",
-    "bcryptjs": "^3.0.3",
-    "dotenv": "^18.0.9",
-    "fastify": "^5.12.7",
-    "knex": "^3.3.0",
-    "mysql2": "^3.24.6",
-    "web-push": "^3.6.7",
+    "@block65/webcrypto-web-push": "^2.0.0",
+    "hono": "^4.13.14",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^2.4.6",
+    "@cloudflare/workers-types": "^5.20261029.1",
     "@types/node": "^26.6.5",
-    "@types/web-push": "^3.6.4",
     "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "wrangler": "^4.155.0"
   }
 }

@@ -3,17 +3,25 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSession } from '@/lib/auth';
 import { Avatar } from '@/components/ui';
-import { Empty, errText, Field, Modal, PageHeader, Secret, SkeletonRows, Submit, useToast } from '@/components/kit';
+import { Credentials, Empty, errText, PageHeader, SkeletonRows, useToast } from '@/components/kit';
+import { ConfirmDialog, DoneDialog, Field, FormDialog, FormSection, UsernameField } from '@/components/form';
 
 interface ClassRow { id: number; name: string; teacher_id: number | null; teacher_name: string | null; students: number }
-interface Teacher { id: number; name: string; email: string; active: number }
+interface Teacher { id: number; name: string; username: string; email: string | null; active: number }
+
+type Dialog =
+  | { kind: 'class'; row?: ClassRow }
+  | { kind: 'teacher' }
+  | { kind: 'delete'; row: ClassRow };
 
 export default function Turmas() {
   const { session, ready, call } = useSession();
   const [classes, setClasses] = useState<ClassRow[] | null>(null);
   const [teachers, setTeachers] = useState<Teacher[] | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [secret, setSecret] = useState<{ title: string; who: string; password: string } | null>(null);
+  const [dialog, setDialog] = useState<Dialog | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [secret, setSecret] = useState<{ title: string; who: string; username: string; password: string } | null>(null);
   const { show, node } = useToast();
 
   const load = useCallback(async () => {
@@ -23,39 +31,45 @@ export default function Turmas() {
 
   useEffect(() => { if (ready && session) void load().catch(() => show('Não foi possível carregar os dados.', 'bad')); }, [ready, session, load, show]);
 
-  async function addClass(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault(); const form = e.currentTarget; const f = new FormData(form); setBusy('class');
-    try {
-      await call('/classes', { method: 'POST', body: JSON.stringify({ name: f.get('name'), teacher_id: f.get('teacher_id') ? Number(f.get('teacher_id')) : null }) });
-      form.reset(); await load(); show('Turma criada');
-    } catch (err) { show(errText(err), 'bad'); }
-    setBusy(null);
+  const open = (d: Dialog) => { setFormError(null); setDialog(d); };
+  const close = () => setDialog(null);
+
+  // Cada envio: espera, fecha a janela e avisa; um erro fica dentro da janela.
+  async function run(action: () => Promise<void>) {
+    setBusy(true); setFormError(null);
+    try { await action(); setDialog(null); await load(); }
+    catch (err) { setFormError(errText(err)); }
+    setBusy(false);
   }
 
-  async function setTeacher(c: ClassRow, teacher_id: number | null) {
-    try { await call(`/classes/${c.id}`, { method: 'PATCH', body: JSON.stringify({ teacher_id }) }); await load(); show('Professor atualizado'); }
-    catch (err) { show(errText(err), 'bad'); }
-  }
+  const saveClass = (e: React.FormEvent<HTMLFormElement>) => {
+    const f = new FormData(e.currentTarget);
+    const body = JSON.stringify({ name: String(f.get('name')).trim(), teacher_id: f.get('teacher_id') ? Number(f.get('teacher_id')) : null });
+    const row = dialog?.kind === 'class' ? dialog.row : undefined;
+    return run(async () => {
+      if (row) await call(`/classes/${row.id}`, { method: 'PATCH', body });
+      else await call('/classes', { method: 'POST', body });
+      show(row ? 'Turma guardada' : 'Turma criada');
+    });
+  };
 
-  async function removeClass(c: ClassRow) {
-    if (!confirm(`Apagar a turma ${c.name}? Os ${c.students} alunos ficam sem turma.`)) return;
-    try { await call(`/classes/${c.id}`, { method: 'DELETE' }); await load(); show('Turma apagada'); } catch (err) { show(errText(err), 'bad'); }
-  }
+  const addTeacher = (e: React.FormEvent<HTMLFormElement>) => {
+    const f = new FormData(e.currentTarget);
+    return run(async () => {
+      const r = await call<{ username: string; temporary_password: string }>('/teachers', { method: 'POST', body: JSON.stringify({ name: f.get('name'), username: f.get('username') || undefined, email: f.get('email') || undefined }) });
+      setSecret({ title: 'Professor criado', who: String(f.get('name')), username: r.username, password: r.temporary_password });
+    });
+  };
 
-  async function addTeacher(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault(); const form = e.currentTarget; const f = new FormData(form); setBusy('teacher');
-    try {
-      const r = await call<{ temporary_password: string }>('/teachers', { method: 'POST', body: JSON.stringify({ name: f.get('name'), email: f.get('email') }) });
-      setSecret({ title: 'Professor criado', who: String(f.get('name')), password: r.temporary_password });
-      form.reset(); await load();
-    } catch (err) { show(errText(err), 'bad'); }
-    setBusy(null);
-  }
+  const removeClass = (c: ClassRow) => run(async () => {
+    await call(`/classes/${c.id}`, { method: 'DELETE' });
+    show('Turma apagada');
+  });
 
   async function reset(t: Teacher) {
     try {
       const r = await call<{ temporary_password: string }>(`/users/${t.id}/reset-password`, { method: 'POST' });
-      setSecret({ title: 'Nova senha temporária', who: t.name, password: r.temporary_password });
+      setSecret({ title: 'Nova senha temporária', who: t.name, username: t.username, password: r.temporary_password });
     } catch (err) { show(errText(err), 'bad'); }
   }
 
@@ -65,58 +79,101 @@ export default function Turmas() {
   }
 
   const activeTeachers = teachers?.filter((t) => t.active) ?? [];
+  const editing = dialog?.kind === 'class' ? dialog.row : undefined;
+
+  const panel = (title: string, subtitle: string, action: React.ReactNode, body: React.ReactNode) => (
+    <section className="card overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line p-4 sm:px-5">
+        <div><h2 className="font-display text-title2">{title}</h2><p className="text-footnote text-muted">{subtitle}</p></div>
+        {action}
+      </div>
+      {body}
+    </section>
+  );
 
   return (
     <section>
-      <PageHeader title="Turmas e professores" subtitle="Cada professor vê e regista ocorrências só na sua turma." />
-      <div className="grid gap-6 xl:grid-cols-2">
-        <div className="flex flex-col gap-4">
-          <h2 className="font-display text-xl">Turmas</h2>
-          <form onSubmit={addClass} className="card anim-rise grid gap-3 p-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
-            <Field label="Nome da turma"><input name="name" required maxLength={60} placeholder="Ex.: 3.º B" className="input" /></Field>
-            <Field label="Professor"><select name="teacher_id" className="input"><option value="">Sem professor</option>{activeTeachers.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</select></Field>
-            <Submit busy={busy === 'class'} busyText="A criar">Criar turma</Submit>
-          </form>
-          <div className="card overflow-hidden">
-            {classes === null ? <SkeletonRows n={3} /> : classes.length === 0 ? <Empty title="Ainda não há turmas" hint="Crie a primeira turma no formulário acima." /> : (
-              <ul>{classes.map((c, i) => (
-                <li key={c.id} className="anim-rise flex flex-wrap items-center gap-3 border-b border-line px-4 py-3 last:border-0" style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}>
-                  <div className="min-w-0 flex-1"><p className="font-medium">{c.name}</p><p className="text-xs text-muted">{c.students} alunos</p></div>
-                  <select aria-label={`Professor da turma ${c.name}`} value={c.teacher_id ?? ''} onChange={(e) => setTeacher(c, e.target.value ? Number(e.target.value) : null)} className="input w-auto min-w-40 py-1.5">
-                    <option value="">Sem professor</option>{activeTeachers.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                  </select>
-                  <button onClick={() => removeClass(c)} className="btn btn-quiet px-2 text-bad">Apagar</button>
-                </li>))}</ul>
-            )}
-          </div>
-        </div>
+      <PageHeader title="Turmas e professores" subtitle="Cada professor vê e regista ocorrências só nas suas turmas." />
+      <div className="grid items-start gap-6 xl:grid-cols-2">
+        {panel(
+          'Turmas',
+          classes ? `${classes.length} ${classes.length === 1 ? 'turma' : 'turmas'}` : 'A carregar',
+          <button onClick={() => open({ kind: 'class' })} className="btn btn-primary">Nova turma</button>,
+          classes === null ? <SkeletonRows n={3} /> : classes.length === 0 ? <Empty title="Ainda não há turmas" hint="Crie a primeira turma e escolha o professor." /> : (
+            <ul className="divide-y divide-line">{classes.map((c) => (
+              <li key={c.id} className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-soft font-display text-[13px] font-semibold text-brand">{c.name.slice(0, 3)}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium">{c.name}</p>
+                  <p className="text-footnote text-muted">{c.students} {c.students === 1 ? 'aluno' : 'alunos'} · {c.teacher_name ?? 'sem professor'}</p>
+                </div>
+                <button onClick={() => open({ kind: 'class', row: c })} className="btn btn-quiet text-sm">Editar</button>
+                <button onClick={() => open({ kind: 'delete', row: c })} className="btn btn-quiet text-sm text-bad hover:bg-bad-bg">Apagar</button>
+              </li>))}</ul>
+          ),
+        )}
 
-        <div className="flex flex-col gap-4">
-          <h2 className="font-display text-xl">Professores</h2>
-          <form onSubmit={addTeacher} className="card anim-rise grid gap-3 p-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end" style={{ animationDelay: '60ms' }}>
-            <Field label="Nome"><input name="name" required className="input" /></Field>
-            <Field label="Email"><input name="email" type="email" required className="input" /></Field>
-            <Submit busy={busy === 'teacher'} busyText="A criar">Criar professor</Submit>
-          </form>
-          <div className="card overflow-hidden">
-            {teachers === null ? <SkeletonRows n={3} /> : teachers.length === 0 ? <Empty title="Ainda não há professores" hint="Crie a conta e entregue a senha temporária ao professor." /> : (
-              <ul>{teachers.map((t, i) => (
-                <li key={t.id} className="anim-rise flex flex-wrap items-center gap-3 border-b border-line px-4 py-3 last:border-0" style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}>
-                  <Avatar name={t.name} />
-                  <div className="min-w-0 flex-1"><p className={`truncate font-medium ${t.active ? '' : 'text-muted line-through'}`}>{t.name}</p><p className="truncate text-xs text-muted">{t.email}</p></div>
-                  <button onClick={() => reset(t)} className="btn btn-quiet px-2 text-sm">Nova senha</button>
-                  <button onClick={() => toggle(t)} className="btn btn-quiet px-2 text-sm">{t.active ? 'Desativar' : 'Ativar'}</button>
-                </li>))}</ul>
-            )}
-          </div>
-        </div>
+        {panel(
+          'Professores',
+          teachers ? `${activeTeachers.length} ${activeTeachers.length === 1 ? 'ativo' : 'ativos'}` : 'A carregar',
+          <button onClick={() => open({ kind: 'teacher' })} className="btn btn-primary">Novo professor</button>,
+          teachers === null ? <SkeletonRows n={3} /> : teachers.length === 0 ? <Empty title="Ainda não há professores" hint="Crie a conta e entregue a senha temporária ao professor." /> : (
+            <ul className="divide-y divide-line">{teachers.map((t) => (
+              <li key={t.id} className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5">
+                <Avatar name={t.name} />
+                <div className="min-w-0 flex-1"><p className={`truncate font-medium ${t.active ? '' : 'text-muted'}`}>{t.name}</p><p className="truncate text-footnote text-muted"><span className="font-mono">{t.username}</span>{t.email ? ` · ${t.email}` : ''}</p></div>
+                {!t.active && <span className="pill" style={{ ['--tone' as string]: 'var(--gone)' }}>Inativo</span>}
+                <button onClick={() => reset(t)} className="btn btn-quiet text-sm">Nova senha</button>
+                <button onClick={() => toggle(t)} className="btn btn-quiet text-sm">{t.active ? 'Desativar' : 'Ativar'}</button>
+              </li>))}</ul>
+          ),
+        )}
       </div>
 
+      {dialog?.kind === 'class' && (
+        <FormDialog
+          title={editing ? 'Editar turma' : 'Nova turma'} subtitle={editing ? editing.name : 'O professor escolhido passa a ver esta turma.'}
+          onClose={close} onSubmit={saveClass} busy={busy} error={formError}
+          submitLabel={editing ? 'Guardar alterações' : 'Criar turma'} busyLabel={editing ? 'A guardar' : 'A criar'}
+        >
+          <FormSection>
+            <Field label="Nome da turma" hint="Como aparece nas listas e nos relatórios."><input name="name" required autoFocus maxLength={60} defaultValue={editing?.name} placeholder="Ex.: 3.º B" autoComplete="off" className="input" /></Field>
+            <Field label="Professor" optional>
+              <select name="teacher_id" defaultValue={editing?.teacher_id ?? ''} className="input">
+                <option value="">Sem professor</option>{activeTeachers.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </Field>
+          </FormSection>
+        </FormDialog>
+      )}
+      {dialog?.kind === 'teacher' && (
+        <FormDialog
+          title="Novo professor" subtitle="A conta é criada com uma senha temporária, mostrada no fim."
+          onClose={close} onSubmit={addTeacher} busy={busy} error={formError}
+          submitLabel="Criar professor" busyLabel="A criar"
+        >
+          <FormSection>
+            <Field label="Nome completo"><input name="name" required autoFocus maxLength={120} autoComplete="off" className="input" /></Field>
+            <UsernameField />
+            <Field label="Email" optional hint="Só para contacto."><input name="email" type="email" autoComplete="off" className="input" /></Field>
+          </FormSection>
+        </FormDialog>
+      )}
+      {dialog?.kind === 'delete' && (
+        <ConfirmDialog
+          title={`Apagar a turma ${dialog.row.name}?`} confirmLabel="Apagar turma" busyLabel="A apagar" busy={busy}
+          onConfirm={() => removeClass(dialog.row)} onClose={close}
+        >
+          {dialog.row.students > 0
+            ? <>Os {dialog.row.students} alunos desta turma ficam sem turma. As presenças já registadas mantêm-se.</>
+            : <>A turma não tem alunos. Esta ação não pode ser desfeita.</>}
+          {formError && <p className="mt-3 text-footnote text-bad">{formError}</p>}
+        </ConfirmDialog>
+      )}
       {secret && (
-        <Modal title={secret.title} subtitle={secret.who} onClose={() => setSecret(null)}>
-          <Secret label="Senha temporária" value={secret.password} note="Mostrada só agora. Entregue-a pessoalmente e peça para trocar em Definições." />
-          <button onClick={() => setSecret(null)} className="btn btn-primary">Feito</button>
-        </Modal>
+        <DoneDialog title={secret.title} subtitle={secret.who} onClose={() => setSecret(null)}>
+          <Credentials username={secret.username} password={secret.password} note="Mostrada só agora. Entregue-a pessoalmente e peça para trocar em Definições." />
+        </DoneDialog>
       )}
       {node}
     </section>
