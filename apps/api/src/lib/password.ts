@@ -22,13 +22,19 @@ export async function hashPassword(password: string) {
 export async function verifyPassword(password: string, stored: string | null | undefined) {
   const [scheme, iter, salt, hash] = (stored ?? '').split('$');
   if (scheme !== 'pbkdf2' || !iter || !salt || !hash) return false;
-  const got = await derive(password, fromB64(salt), Number(iter));
+  const iterations = Number(iter);
+  if (!Number.isInteger(iterations) || iterations < 1 || iterations > ITERATIONS) return false;
+  const got = await derive(password, fromB64(salt), iterations);
   const want = fromB64(hash);
   if (got.length !== want.length) return false;
   let diff = 0;
   for (let i = 0; i < got.length; i++) diff |= got[i] ^ want[i];
   return diff === 0;
 }
+
+/** Hash de uma senha aleatória, calculado uma vez, para o login gastar o mesmo tempo com utilizadores inexistentes. */
+let dummy: Promise<string> | undefined;
+export const dummyHash = () => (dummy ??= hashPassword(randomHex(16)));
 
 /** Senha temporária legível (sem 0/O, 1/l), mostrada uma vez a quem cria a conta. */
 export function tempPassword(length = 10) {

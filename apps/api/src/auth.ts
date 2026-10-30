@@ -11,7 +11,7 @@ export const signToken = (u: JwtUser, secret: string) =>
 
 /**
  * Exige sessão com um dos perfis. A cada pedido confirma que a conta continua ativa e que a escola
- * não foi suspensa: desativar alguém no painel corta-lhe o acesso logo, sem esperar que o token expire.
+ * não foi suspensa; perfil e escola vêm da base, não do token: desativar alguém no painel corta-lhe o acesso logo, sem esperar que o token expire.
  */
 export const requireRole = (...roles: Role[]) =>
   createMiddleware<AppEnv>(async (c, next) => {
@@ -20,11 +20,11 @@ export const requireRole = (...roles: Role[]) =>
     let payload: JwtUser;
     try { payload = (await verify(header.slice(7), c.env.JWT_SECRET, 'HS256')) as unknown as JwtUser; }
     catch { return c.json({ error: 'unauthorized' }, 401); }
-    const live = await first<{ active: number; school_active: number | null }>(c.env.DB,
-      'SELECT u.active, s.active AS school_active FROM users u LEFT JOIN schools s ON s.id = u.school_id WHERE u.id = ?', payload.sub);
-    if (!live?.active || (payload.role !== 'super_admin' && !live.school_active)) return c.json({ error: 'unauthorized' }, 401);
-    if (!roles.includes(payload.role)) return c.json({ error: 'forbidden' }, 403);
-    c.set('user', { sub: Number(payload.sub), role: payload.role, school_id: payload.school_id == null ? null : Number(payload.school_id) });
+    const live = await first<{ active: number; role: Role; school_id: number | null; school_active: number | null }>(c.env.DB,
+      'SELECT u.active, u.role, u.school_id, s.active AS school_active FROM users u LEFT JOIN schools s ON s.id = u.school_id WHERE u.id = ?', payload.sub);
+    if (!live?.active || (live.role !== 'super_admin' && !live.school_active)) return c.json({ error: 'unauthorized' }, 401);
+    if (!roles.includes(live.role)) return c.json({ error: 'forbidden' }, 403);
+    c.set('user', { sub: Number(payload.sub), role: live.role, school_id: live.school_id });
     await next();
   });
 
