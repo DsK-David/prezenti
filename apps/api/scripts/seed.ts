@@ -1,15 +1,14 @@
 /**
  * Gera o SQL dos dados de demonstração (APAGA tudo antes): 2 escolas, contas, 25 alunos e 14 dias de atividade.
- *   tsx scripts/seed.ts --out .seed.sql                      senha "prezenti123" em todas as contas (só local)
- *   tsx scripts/seed.ts --out .seed.sql --random <ficheiro>  senha aleatória por conta, escrita no <ficheiro>
+ *   tsx scripts/seed.ts --out .seed.sql    senha "prezenti123" em todas as contas; só o utilizador muda
  * Depois: wrangler d1 execute prezenti --file .seed.sql [--local | --remote]
  */
 import fs from 'node:fs';
-import { hashPassword, tempPassword } from '../src/lib/password.js';
+import { hashPassword } from '../src/lib/password.js';
 
 const args = process.argv.slice(2);
 const out = args[args.indexOf('--out') + 1] ?? '.seed.sql';
-const randomFile = args.includes('--random') ? args[args.indexOf('--random') + 1] : null;
+const PASSWORD = 'prezenti123'; // igual em todas as contas de demonstração (o ecrã de login tem o acesso rápido)
 
 const q = (v: unknown) => (v == null ? 'NULL' : typeof v === 'number' ? String(v) : typeof v === 'boolean' ? (v ? '1' : '0') : `'${String(v).replace(/'/g, "''")}'`);
 const sql: string[] = [];
@@ -17,12 +16,9 @@ const insert = (table: string, row: Record<string, unknown>) =>
   sql.push(`INSERT INTO ${table} (${Object.keys(row).join(', ')}) VALUES (${Object.values(row).map(q).join(', ')});`);
 const sqlTime = (d: Date) => d.toISOString().slice(0, 19).replace('T', ' ');
 
-const credentials: { username: string; role: string; password: string }[] = [];
-async function account(row: { id: number; school_id: number | null; name: string; username: string; role: string }) {
-  const password = randomFile ? tempPassword(12) : 'prezenti123';
-  credentials.push({ username: row.username, role: row.role, password });
-  insert('users', { ...row, password_hash: await hashPassword(password) });
-}
+const passwordHash = await hashPassword(PASSWORD);
+const account = (row: { id: number; school_id: number | null; name: string; username: string; role: string }) =>
+  insert('users', { ...row, password_hash: passwordHash });
 
 for (const t of ['notification_log', 'consents', 'push_subscriptions', 'unknown_cards', 'events', 'devices', 'guardian_students', 'students', 'classes', 'users', 'schools', 'login_failures']) {
   sql.push(`DELETE FROM ${t};`);
@@ -30,22 +26,22 @@ for (const t of ['notification_log', 'consents', 'push_subscriptions', 'unknown_
 sql.push('DELETE FROM sqlite_sequence;');
 
 // Duas escolas para validar o isolamento entre elas.
-await account({ id: 1, school_id: null, name: 'Super Admin', username: 'super', role: 'super_admin' });
+account({ id: 1, school_id: null, name: 'Super Admin', username: 'super', role: 'super_admin' });
 let userId = 2, classId = 1, studentId = 1;
 const firstClass: Record<number, number> = {};
 const firstStudent: Record<number, number> = {};
 for (const [i, name] of ['Escola Piloto', 'Escola Demo B'].entries()) {
   const sid = i + 1;
   insert('schools', { id: sid, name, slug: i === 0 ? 'piloto' : 'demo-b' });
-  await account({ id: userId++, school_id: sid, name: `Gestor ${sid}`, username: `admin${sid}`, role: 'admin' });
+  account({ id: userId++, school_id: sid, name: `Gestor ${sid}`, username: `admin${sid}`, role: 'admin' });
   const teacher = userId++;
-  await account({ id: teacher, school_id: sid, name: `Prof. ${sid}`, username: `prof${sid}`, role: 'teacher' });
+  account({ id: teacher, school_id: sid, name: `Prof. ${sid}`, username: `prof${sid}`, role: 'teacher' });
   firstClass[sid] = classId;
   insert('classes', { id: classId++, school_id: sid, name: '1.º A', teacher_id: teacher });
   firstStudent[sid] = studentId;
   insert('students', { id: studentId++, school_id: sid, class_id: firstClass[sid], name: `Aluno Teste ${sid}`, card_uid: `04A1B2C3D4E5${i}0` });
   const guardian = userId++;
-  await account({ id: guardian, school_id: sid, name: `Pai ${sid}`, username: `pai${sid}`, role: 'guardian' });
+  account({ id: guardian, school_id: sid, name: `Pai ${sid}`, username: `pai${sid}`, role: 'guardian' });
   insert('guardian_students', { guardian_id: guardian, student_id: firstStudent[sid] });
 }
 
@@ -97,9 +93,4 @@ for (let back = 13; back >= 0; back--) {
 }
 
 fs.writeFileSync(out, sql.join('\n') + '\n');
-if (randomFile) {
-  const lines = ['# Credenciais do Prezenti publicado', '', 'Geradas pelo seed. Mude cada senha no primeiro acesso (Definições) e apague este ficheiro.', '',
-    '| Utilizador | Perfil | Senha |', '|---|---|---|', ...credentials.map((c) => `| ${c.username} | ${c.role} | ${c.password} |`), ''];
-  fs.writeFileSync(randomFile, lines.join('\n'));
-}
-console.log(`${sql.length} instruções em ${out}${randomFile ? `; senhas em ${randomFile}` : ''}`);
+console.log(`${sql.length} instruções em ${out}`);

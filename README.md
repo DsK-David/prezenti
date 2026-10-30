@@ -35,7 +35,7 @@ npm run dev                 # API em :4000 e web em http://localhost:3000
 
 A web chama a API em `/api`, na mesma origem; o `next dev` encaminha para `API_INTERNAL_URL` (por defeito `http://localhost:4000`). Assim há um só endereço HTTPS para o Web NFC, o PWA e o túnel.
 
-Contas de demonstração locais (senha `prezenti123`): `super`, `admin1`, `prof1`, `pai1`.
+Contas de demonstração (senha `prezenti123` em todas): `super`, `admin1`, `prof1`, `pai1`, `admin2`, `prof2`, `pai2`. O ecrã de login tem um acesso rápido com elas.
 
 Para ver localmente exatamente o que vai para produção (site estático + Function + D1 local): `npm --prefix apps/web run preview:pages` e abrir http://localhost:8788.
 
@@ -75,5 +75,5 @@ npm --prefix apps/api run db:migrate:remote      # aplica migrações novas na D
 ```
 
 - **Segredos** (já configurados): `JWT_SECRET`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`. Para trocar: `npx wrangler pages secret put JWT_SECRET --project-name prezenti`, a partir de `apps/web`.
-- **Dados de demonstração em produção**: `npm --prefix apps/api run db:seed:remote` **APAGA tudo** e cria as contas com senhas aleatórias em `credenciais.local.md` (fora do git). Não o corra depois de haver dados reais.
+- **Dados de demonstração em produção**: `npm --prefix apps/api run db:seed:remote` **APAGA tudo** e cria as contas de demonstração, todas com a senha `prezenti123`. Mude as senhas (ou não o use) quando a app tiver dados e utilizadores reais. Não o corra depois de haver dados reais.
 - O login tem um limite de 10 senhas erradas por utilizador em 15 minutos.

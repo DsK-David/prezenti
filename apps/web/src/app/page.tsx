@@ -12,6 +12,18 @@ const MESSAGES: Record<string, string> = {
 
 const POINTS = ['Entrada, almoço e saída em segundos', 'Aviso direto no telemóvel da família', 'Continua a registar sem internet'];
 
+// Contas do seed de demonstração (todas com a mesma senha): um toque entra.
+const DEMO_PASSWORD = 'prezenti123';
+const DEMO_ACCOUNTS = [
+  { username: 'super', label: 'Super admin' },
+  { username: 'admin1', label: 'Gestor 1' },
+  { username: 'prof1', label: 'Professor 1' },
+  { username: 'pai1', label: 'Pai 1' },
+  { username: 'admin2', label: 'Gestor 2' },
+  { username: 'prof2', label: 'Professor 2' },
+  { username: 'pai2', label: 'Pai 2' },
+];
+
 // Altura baixa (portátil pequeno, telemóvel deitado): corta o que é só decoração, nunca o formulário.
 const TALL = '[@media(max-height:760px)]:hidden';
 
@@ -29,19 +41,23 @@ export default function Login() {
     else setChecking(false);
   }, []);
 
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  async function signIn(username: string, password: string) {
     setError(null);
     setBusy(true);
-    const f = new FormData(e.currentTarget);
     try {
-      const { user } = await login(String(f.get('username')), String(f.get('password')));
+      const { user } = await login(username, password);
       window.location.href = homeFor(user.role);
     } catch (err) {
       setError(MESSAGES[(err as Error).message] ?? 'Sem ligação ao servidor. Verifique a internet e tente de novo.');
       setShake((n) => n + 1);
       setBusy(false);
     }
+  }
+
+  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    void signIn(String(f.get('username')), String(f.get('password')));
   }
 
   if (checking) {
@@ -109,7 +125,16 @@ export default function Login() {
             {busy ? <><Spinner /> A entrar</> : <>Entrar <span aria-hidden>→</span></>}
           </button>
 
-          <p className={`text-center text-xs text-muted ${TALL}`}>Problemas com o acesso? Fale com a secretaria da escola.</p>
+          <div className="border-t border-line pt-4">
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">Acesso rápido (demonstração)</p>
+            <div className="flex flex-wrap gap-1.5">
+              {DEMO_ACCOUNTS.map((a) => (
+                <button key={a.username} type="button" disabled={busy} onClick={() => signIn(a.username, DEMO_PASSWORD)} className="btn btn-quiet h-8 px-3 text-sm">
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </form>
       </section>
     </main>

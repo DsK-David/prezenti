@@ -9,7 +9,7 @@
     "db:migrate": "wrangler d1 migrations apply prezenti --local",
     "db:seed": "tsx scripts/seed.ts --out .seed.sql && wrangler d1 execute prezenti --local --file .seed.sql",
     "db:migrate:remote": "wrangler d1 migrations apply prezenti --remote",
-    "db:seed:remote": "tsx scripts/seed.ts --out .seed.sql --random ../../credenciais.local.md && wrangler d1 execute prezenti --remote --file .seed.sql"
+    "db:seed:remote": "tsx scripts/seed.ts --out .seed.sql && wrangler d1 execute prezenti --remote --file .seed.sql"
   },
   "dependencies": {
     "@block65/webcrypto-web-push": "^2.0.0",
